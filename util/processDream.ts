@@ -1,4 +1,4 @@
-import { Journal, JournalResponse } from "@/types";
+import { JournalResponse } from "@/types";
 
 /**
  * Processes a raw audio transcription of a dream and returns a structured Journal JSON.

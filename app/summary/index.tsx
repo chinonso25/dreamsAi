@@ -80,7 +80,6 @@ export default function Screen() {
         .from("dreams")
         .insert([{ ...resp, user_id: user?.id, audio_url: url }])
         .select();
-      console.log({ data, error });
     },
     mutationKey: ["uploadDream"],
   });

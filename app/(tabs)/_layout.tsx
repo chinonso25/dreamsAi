@@ -1,8 +1,15 @@
-import { router, Tabs } from "expo-router";
+import { Redirect, Tabs } from "expo-router";
 import React from "react";
 import { TabBar } from "@/components/TabBar";
+import { useOnboarding } from "@/contexts/OnboardingProvider";
 
 export default function TabLayout() {
+  const { isOnboardingComplete } = useOnboarding();
+
+  if (!isOnboardingComplete) {
+    return <Redirect href="/onboarding" />;
+  }
+
   return (
     <Tabs
       screenOptions={{
@@ -16,13 +23,6 @@ export default function TabLayout() {
           headerShown: true,
           headerTitle: "DreamAi",
           headerTitleStyle: { fontFamily: "Outfit_700Bold", fontSize: 24 },
-          headerSearchBarOptions: {
-            placeholder: "Search Dreams",
-            onChangeText: (event) => {
-              const query = event.nativeEvent.text;
-              router.setParams({ searchQuery: query });
-            },
-          },
         }}
         name="index"
       />

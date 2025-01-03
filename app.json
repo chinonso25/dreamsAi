@@ -35,12 +35,6 @@
           "backgroundColor": "#ffffff"
         }
       ],
-      [
-        "expo-av",
-        {
-          "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone."
-        }
-      ],
       "expo-font",
       [
         "expo-audio",
@@ -51,7 +45,7 @@
     ],
     "experiments": {
       "typedRoutes": true,
-      "reactCompiler": false
+      "reactCompiler": true
     }
   }
 }

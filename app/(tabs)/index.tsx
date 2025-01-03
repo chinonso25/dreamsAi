@@ -1,21 +1,17 @@
-import {
-  View,
-  SafeAreaView,
-  Button,
-  Text,
-  Pressable,
-  ScrollView,
-  TouchableOpacity,
-} from "react-native";
+import { View, SafeAreaView, Pressable, ScrollView } from "react-native";
 
 import { ThemedText } from "@/components/ThemedText";
-import { router, useRouter, useLocalSearchParams } from "expo-router";
+import { router } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/util/supabase";
 import { useAuth } from "@/contexts/AuthProvider";
 import { formatDate } from "@/util";
 import { MasonryFlashList } from "@shopify/flash-list";
 import { Journal } from "@/types";
+import {
+  LoadingScreen,
+  ErrorScreen,
+} from "@/components/LoadingAndErrorScreens";
 
 const renderNote = ({ item }: { item: Journal }) => {
   const { title, summary, keywords, created_at } = item;
@@ -60,34 +56,28 @@ const renderNote = ({ item }: { item: Journal }) => {
 };
 
 export default function HomeScreen() {
-  const { push } = useRouter();
   const { user } = useAuth();
-  const { searchQuery } = useLocalSearchParams();
 
   const {
     data: dreams,
     isLoading,
     error,
+    refetch,
   } = useQuery<Journal[]>({
-    queryKey: ["dreams", searchQuery],
+    queryKey: ["dreams"],
     queryFn: async () => {
-      let query = supabase.from("dreams").select().eq("user_id", user?.id);
-
-      if (searchQuery && String(searchQuery).length > 4) {
-        query = await supabase.rpc("search_dreams", {
-          search_query: searchQuery,
-          user_id: user?.id,
-        });
-      }
-
-      const { data, error } = await query;
+      const { data, error } = await supabase
+        .from("dreams")
+        .select()
+        .eq("user_id", user?.id);
       if (error) throw error;
       return data as Journal[];
     },
     enabled: Boolean(user?.id),
   });
 
-  if (!dreams) return null;
+  if (isLoading) return <LoadingScreen />;
+  if (error) return <ErrorScreen error={error as Error} retry={refetch} />;
 
   return (
     <SafeAreaView style={{ flex: 1 }}>

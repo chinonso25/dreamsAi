@@ -21,6 +21,7 @@ export async function transcribeAudio(audioFilePath: string): Promise<string> {
       }
     );
     response = await response.json();
+    console.log("response", response);
     return response.text;
   } catch (error) {
     console.error("Failed to transcribe audio:", error);

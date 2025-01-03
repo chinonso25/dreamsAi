@@ -61,16 +61,6 @@ const ToolBar = styled.View({
   marginVertical: 16,
 });
 
-const Divider = styled.View({
-  height: 16,
-  borderColor: "black",
-  borderBottomWidth: StyleSheet.hairlineWidth,
-});
-
-const SaveButtonContainer = styled.View({
-  flex: 1,
-});
-
 const SaveButton = styled.TouchableOpacity({
   padding: 8,
   borderRadius: 8,

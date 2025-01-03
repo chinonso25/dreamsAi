@@ -10,8 +10,6 @@ import {
   SafeAreaView,
   ScrollView,
   View,
-  Dimensions,
-  GestureResponderEvent,
   TextInput,
   TouchableOpacity,
   Alert,
@@ -22,9 +20,6 @@ import styled from "styled-components/native";
 import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import { useState, useEffect } from "react";
 import DreamAudioPlayer from "@/components/DreamAudioPlayer";
-
-const { width: SCREEN_WIDTH } = Dimensions.get("window");
-const SEEKER_WIDTH = SCREEN_WIDTH - 32;
 
 declare global {
   var showDreamActions: (() => void) | undefined;
