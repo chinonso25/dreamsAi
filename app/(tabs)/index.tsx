@@ -1,7 +1,7 @@
 import { View, SafeAreaView, Pressable, ScrollView } from "react-native";
 
 import { ThemedText } from "@/components/ThemedText";
-import { router } from "expo-router";
+import { router, useRouter } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/util/supabase";
 import { useAuth } from "@/contexts/AuthProvider";
@@ -57,6 +57,7 @@ const renderNote = ({ item }: { item: Journal }) => {
 
 export default function HomeScreen() {
   const { user } = useAuth();
+  const { push } = useRouter();
 
   const {
     data: dreams,
@@ -78,6 +79,46 @@ export default function HomeScreen() {
 
   if (isLoading) return <LoadingScreen />;
   if (error) return <ErrorScreen error={error as Error} retry={refetch} />;
+
+  if (!dreams?.length) {
+    return (
+      <SafeAreaView style={{ flex: 1 }}>
+        <View
+          style={{
+            flex: 1,
+            padding: 24,
+            justifyContent: "center",
+            alignItems: "center",
+            backgroundColor: "white",
+          }}
+        >
+          <ThemedText
+            type="subtitle"
+            style={{ fontSize: 24, textAlign: "center", marginBottom: 16 }}
+          >
+            Start Your Dream Journal
+          </ThemedText>
+          <ThemedText style={{ textAlign: "center", marginBottom: 24 }}>
+            Record and explore your dreams. Each entry helps you understand
+            yourself better.
+          </ThemedText>
+          <Pressable
+            style={{
+              backgroundColor: "#007AFF",
+              paddingHorizontal: 24,
+              paddingVertical: 12,
+              borderRadius: 12,
+            }}
+            onPress={() => push("/AddDream")}
+          >
+            <ThemedText style={{ color: "white", fontWeight: "600" }}>
+              Add Your First Dream
+            </ThemedText>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={{ flex: 1 }}>

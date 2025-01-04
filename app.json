@@ -1,23 +1,27 @@
 {
   "expo": {
-    "name": "dreamsAi",
-    "slug": "dreamsAi",
+    "name": "Dream AI",
+    "slug": "dreamAi",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "myapp",
+    "scheme": "dreamAi",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "com.chinonso25.dreamsAi"
+      "supportsTablet": false,
+      "bundleIdentifier": "io.faith-tech.dreamAI"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "com.chinonso25.dreamsAi"
+      "package": "io.faith-tech.dreamAI",
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -46,6 +50,15 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "be57d549-d7e7-41ce-b984-9bfc8fc05ebc"
+      }
+    },
+    "owner": "chinonso25"
   }
 }

@@ -1,5 +1,5 @@
 import { BottomSheetModal, BottomSheetView } from "@gorhom/bottom-sheet";
-import { useRef, forwardRef, useEffect, useState } from "react";
+import { forwardRef, useEffect } from "react";
 import { ThemedText } from "./ThemedText";
 import { ThemedView } from "./ThemedView";
 import FontAwesome6 from "@expo/vector-icons/FontAwesome6";
@@ -19,23 +19,24 @@ import {
   useAudioRecorder,
   useAudioRecorderState,
 } from "expo-audio";
+import { BottomSheetModalRef } from "@gorhom/bottom-sheet/lib/typescript/components/bottomSheetModalProvider/types";
 
 const ContainerComponent = ({ children }: { children?: ReactNode }) => (
   <FullWindowOverlay>{children}</FullWindowOverlay>
 );
 
-const RecorderBottomSheet = forwardRef<BottomSheetModal>((_, ref) => {
+const RecorderBottomSheet = forwardRef<BottomSheetModalRef>((_, ref) => {
   const { bottom } = useSafeAreaInsets();
   const { push, dismissAll } = useRouter();
   const { setRecordingUri } = useRecordingStore();
 
   const recording = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recordingStatus = useAudioRecorderState(recording);
-  console.log(recordingStatus.metering);
 
   const dreamify = () => {
     setRecordingUri(recording.uri);
     ref.current?.close();
+
     dismissAll();
     push("/summary");
   };
@@ -132,8 +133,15 @@ const RecorderBottomSheet = forwardRef<BottomSheetModal>((_, ref) => {
           </RecordButtonContainer>
 
           <ButtonView>
-            <ButtonContainer onPress={pauseRecording}>
-              <FontAwesome6 name="pause-circle" size={48} color="black" />
+            <ButtonContainer
+              onPress={pauseRecording}
+              disabled={!recordingStatus.isRecording}
+            >
+              <FontAwesome6
+                name="pause-circle"
+                size={48}
+                color={recordingStatus.isRecording ? "black" : "#f5f5f5"}
+              />
             </ButtonContainer>
             <ButtonText>Pause</ButtonText>
           </ButtonView>
@@ -142,6 +150,7 @@ const RecorderBottomSheet = forwardRef<BottomSheetModal>((_, ref) => {
     </BottomSheetModal>
   );
 });
+RecorderBottomSheet.displayName = "RecorderBottomSheet";
 
 export default RecorderBottomSheet;
 

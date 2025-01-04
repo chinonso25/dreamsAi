@@ -4,14 +4,17 @@ import { useRecordingStore } from "@/store";
 import { processDreamTranscription } from "@/util/processDream";
 import { transcribeAudio } from "@/util/transcribeAudio";
 import { Feather } from "@expo/vector-icons";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { SafeAreaView, ScrollView, View } from "react-native";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { SafeAreaView, ScrollView, View, Alert } from "react-native";
 import styled from "styled-components/native";
 import { Journal } from "@/types";
 import { formatDate } from "@/util";
 import { supabase } from "@/util/supabase";
 import { useAuth } from "@/contexts/AuthProvider";
 import * as FileSystem from "expo-file-system";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { ErrorScreen } from "@/components/LoadingAndErrorScreens";
+import { LoadingScreen } from "@/components/LoadingAndErrorScreens";
 
 export default function Screen() {
   const currentRecordingUri = useRecordingStore(
@@ -19,6 +22,9 @@ export default function Screen() {
   );
   const { user } = useAuth();
   const { id: userId } = user || {};
+  const router = useRouter();
+  const { dreamData } = useLocalSearchParams<{ dreamData?: string }>();
+  const queryClient = useQueryClient();
 
   const uploadDreamAudio = async (): Promise<string | null> => {
     if (!currentRecordingUri || !userId) return null;
@@ -72,14 +78,31 @@ export default function Screen() {
     }
   };
 
-  const { mutateAsync: uploadDreamToSupabase } = useMutation({
+  const {
+    mutateAsync: uploadDreamToSupabase,
+    isPending: uploadDreamPending,
+    isError: uploadDreamError,
+  } = useMutation({
     mutationFn: async (resp: Partial<Journal>) => {
-      const url = await uploadDreamAudio();
+      const url = currentRecordingUri ? await uploadDreamAudio() : null;
 
       const { data, error } = await supabase
         .from("dreams")
         .insert([{ ...resp, user_id: user?.id, audio_url: url }])
         .select();
+
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["dreams"] });
+
+      Alert.alert("Success", "Dream saved successfully!");
+      router.back();
+    },
+    onError: (error) => {
+      Alert.alert("Error", "Failed to save dream. Please try again.");
+      console.error(error);
     },
     mutationKey: ["uploadDream"],
   });
@@ -89,39 +112,40 @@ export default function Screen() {
     isLoading: dreamLoading,
     error: dreamError,
   } = useQuery({
-    queryKey: ["transcribeDream", currentRecordingUri],
+    queryKey: ["transcribeDream", currentRecordingUri, dreamData],
     queryFn: async (): Promise<Journal | undefined> => {
       try {
-        if (currentRecordingUri) {
+        if (dreamData) {
+          // If we have dream data from text input, parse and return it
+          return JSON.parse(dreamData) as Journal;
+        } else if (currentRecordingUri) {
+          // Handle audio recording
           const transcribedText = await transcribeAudio(currentRecordingUri);
           const trans = await processDreamTranscription(transcribedText);
-          const journ: Partial<Journal> = {
+          return {
             ...trans,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
             is_starred: false,
             user_id: user?.id ? parseInt(user.id) : undefined,
-          };
-
-          try {
-            await uploadDreamToSupabase(journ);
-          } catch (error) {
-            console.error("Failed to upload dream to Supabase:", error);
-          }
-
-          return journ as Journal;
+          } as Journal;
         }
       } catch (error) {
-        console.log("Failed to transcribe dream:", error);
+        console.log("Failed to process dream:", error);
+        throw error;
       }
       return undefined;
     },
-    enabled: Boolean(currentRecordingUri),
+    enabled: Boolean(currentRecordingUri) || Boolean(dreamData),
   });
 
   const { title, transcript, created_at, summary, tags, keywords } =
     dreamResponse || {};
   if (dreamLoading || dreamError) return null;
+
+  if (uploadDreamPending || dreamLoading) return <LoadingScreen />;
+  if (uploadDreamError || dreamError)
+    return <ErrorScreen error={uploadDreamError || dreamError} />;
 
   return (
     <SafeAreaView style={{ flex: 1 }}>
@@ -167,7 +191,7 @@ export default function Screen() {
           </TagsWrapper>
 
           <ThemedText type="subtitle">Keywords</ThemedText>
-          <TagsWrapper>
+          {/* <TagsWrapper>
             {keywords?.map((word) => (
               <TagContainer key={word}>
                 <ThemedText
@@ -178,7 +202,18 @@ export default function Screen() {
                 </ThemedText>
               </TagContainer>
             ))}
-          </TagsWrapper>
+          </TagsWrapper> */}
+
+          <SaveButton
+            onPress={() =>
+              dreamResponse && uploadDreamToSupabase(dreamResponse)
+            }
+            disabled={uploadDreamPending}
+          >
+            <ThemedText type="defaultSemiBold" style={{ color: "white" }}>
+              Save Dream
+            </ThemedText>
+          </SaveButton>
         </ScrollView>
       </ThemedView>
     </SafeAreaView>
@@ -203,6 +238,7 @@ const Spacer = styled.View({
 const TagsWrapper = styled.View({
   flexDirection: "row",
   marginVertical: 8,
+  flexWrap: "wrap",
 });
 
 const TagContainer = styled.View({
@@ -210,8 +246,17 @@ const TagContainer = styled.View({
   backgroundColor: "#7e57c2",
   borderRadius: 24,
   marginHorizontal: 4,
+  marginVertical: 4,
 });
 
 const ShareButton = styled.TouchableOpacity({
   alignSelf: "flex-end",
+});
+
+const SaveButton = styled.TouchableOpacity({
+  backgroundColor: "#7e57c2",
+  padding: 16,
+  borderRadius: 8,
+  alignItems: "center",
+  marginTop: 24,
 });

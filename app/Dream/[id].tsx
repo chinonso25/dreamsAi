@@ -28,7 +28,7 @@ declare global {
 export default function Dream() {
   const { user } = useAuth();
   const { id: dreamId } = useLocalSearchParams();
-  const queryClient = useQueryClient();
+  const { invalidateQueries } = useQueryClient();
   const router = useRouter();
   const [isEditing, setIsEditing] = useState(false);
   const [editedTitle, setEditedTitle] = useState("");
@@ -76,8 +76,8 @@ export default function Dream() {
       return data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["dream", dreamId] });
-      queryClient.invalidateQueries({ queryKey: ["dreams"] });
+      invalidateQueries({ queryKey: ["dream", dreamId] });
+      invalidateQueries({ queryKey: ["dreams"] });
       setIsEditing(false);
       Alert.alert("Success", "Dream updated successfully");
     },
@@ -140,7 +140,7 @@ export default function Dream() {
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["dreams"] });
+      invalidateQueries({ queryKey: ["dreams"] });
       router.back();
       Alert.alert("Success", "Dream deleted successfully");
     },
@@ -161,8 +161,8 @@ export default function Dream() {
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["dream", dreamId] });
-      queryClient.invalidateQueries({ queryKey: ["dreams"] });
+      invalidateQueries({ queryKey: ["dream", dreamId] });
+      invalidateQueries({ queryKey: ["dreams"] });
     },
     onError: (error) => {
       Alert.alert("Error", "Failed to update star status");
@@ -313,7 +313,7 @@ export default function Dream() {
             )}
           </ScrollView>
         </HeaderContentContainer>
-        {audio_url && <DreamAudioPlayer audio_url={audio_url} />}
+        {/* {audio_url && <DreamAudioPlayer audio_url={audio_url} />} */}
       </HeaderContainer>
 
       <ScrollView>

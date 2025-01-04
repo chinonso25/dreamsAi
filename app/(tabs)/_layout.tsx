@@ -26,7 +26,14 @@ export default function TabLayout() {
         }}
         name="index"
       />
-      <Tabs.Screen options={{ headerShown: true }} name="settings" />
+      <Tabs.Screen
+        options={{
+          headerShown: true,
+          headerTitle: "Settings",
+          headerTitleStyle: { fontFamily: "Outfit_700Bold", fontSize: 24 },
+        }}
+        name="settings"
+      />
     </Tabs>
   );
 }
