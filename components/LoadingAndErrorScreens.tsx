@@ -30,7 +30,7 @@ export const ErrorScreen = ({
         type="subtitle"
         style={{ marginBottom: 8, textAlign: "center" }}
       >
-        Oops! Something went wrong
+        Could not load dreams
       </ThemedText>
       <ThemedText style={{ textAlign: "center", marginBottom: 16 }}>
         {error.message}
@@ -45,7 +45,7 @@ export const ErrorScreen = ({
             borderRadius: 8,
           }}
         >
-          <ThemedText style={{ color: "white" }}>Try Again</ThemedText>
+          <ThemedText style={{ color: "white" }}>Retry</ThemedText>
         </Pressable>
       )}
     </View>

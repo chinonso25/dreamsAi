@@ -1,52 +1,99 @@
-import { supabase } from "@/util/supabase";
-import { Session } from "@supabase/supabase-js";
-import {
-  createContext,
-  ReactNode,
-  useContext,
-  useEffect,
-  useState,
-} from "react";
+import React, { createContext, ReactNode, useContext, useEffect, useRef, useState } from 'react';
+import { AppState } from 'react-native';
+import { useNetworkState } from 'expo-network';
+import { cachedUser, DreamerUser, ensureSession, authClient, rememberUser, forgetDeletedUser } from '@/util/auth-client';
+import { beginAccountDeletion, cancelAccountDeletion, clearDeletedAccountJournal, hydrateJournal, rebindJournalOwner, refreshDreams, syncJournal, useJournalStore } from '@/util/journal';
+import { clearDeletedAccountDraft, rebindDraftOwner } from '@/util/drafts';
+import { apiRequest } from '@/util/api';
 
-type AuthContextType = {
-  session: Session | null;
-  isAuthenticated: boolean;
-  user: Session["user"] | null;
-};
-
-const AuthContext = createContext<AuthContextType>({
-  session: null,
-  isAuthenticated: false,
-  user: null,
-});
-
-export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setLoading(false);
-    });
-
-    supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-    });
-  }, []);
-
-  if (loading) return null;
-
-  return (
-    <AuthContext.Provider
-      value={{
-        session,
-        user: session?.user ?? null,
-        isAuthenticated: Boolean(session),
-      }}
-    >
-      {children}
-    </AuthContext.Provider>
-  );
-};
-
+type Context = { user: DreamerUser | null; isAuthenticated: boolean; isGuest: boolean; loading: boolean; error?: string; reconnect: () => Promise<void>; sendEmailCode: (email: string) => Promise<void>; verifyEmailCode: (email: string, otp: string) => Promise<void>; deleteAccount: () => Promise<{ cleanupWarning?: string }> };
+const AuthContext = createContext<Context>({ user: null, isAuthenticated: false, isGuest: true, loading: false, reconnect: async () => {}, sendEmailCode: async () => {}, verifyEmailCode: async () => {}, deleteAccount: async () => ({}) });
 export const useAuth = () => useContext(AuthContext);
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<DreamerUser | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string>();
+  const deleting = useRef(false);
+  const connection = useRef<Promise<void> | null>(null);
+  const network = useNetworkState();
+  const reconnect = async () => {
+    if (deleting.current) return;
+    if (connection.current) return connection.current;
+    connection.current = (async () => { try {
+      const previous = await cachedUser();
+      const next = await ensureSession();
+      setUser(next); setError(undefined);
+      if (previous?.id !== next.id) await rebindJournalOwner(previous?.id, next.id);
+      await rebindDraftOwner(previous?.id, next.id);
+      await refreshDreams();
+    } catch (e) { setError(e instanceof TypeError ? 'Could not reach the cloud. Your dreams are saved on this device.' : e instanceof Error ? e.message : 'Your journal is saved here. Reconnect to sync.'); }
+    })();
+    try { await connection.current; } finally { connection.current = null; }
+  };
+  useEffect(() => {
+    let active = true;
+    void hydrateJournal().catch(() => {});
+    void cachedUser().then(value => { if (active) setUser(value); });
+    return () => { active = false; };
+  }, []);
+  useEffect(() => {
+    if (network.isConnected !== false) void reconnect();
+    // Network transitions restore sync without blocking local capture.
+  }, [network.isConnected]);
+  useEffect(() => {
+    const listener = AppState.addEventListener('change', state => { if (state === 'active') void reconnect(); });
+    const interval = setInterval(() => { if (AppState.currentState === 'active' && !deleting.current) void syncJournal(); }, 30000);
+    return () => { listener.remove(); clearInterval(interval); };
+  }, []);
+  const sendEmailCode = async (email: string) => {
+    setLoading(true);
+    try {
+      // Flush the guest journal before Better Auth moves ownership to the email account.
+      await syncJournal();
+      const result = await authClient.emailOtp.sendVerificationOtp({ email: email.trim().toLowerCase(), type: 'sign-in' });
+      if (result.error) throw new Error(result.error.message || 'Could not send your sign-in code. Please try again.');
+    } finally { setLoading(false); }
+  };
+  const verifyEmailCode = async (email: string, otp: string) => {
+    setLoading(true);
+    try {
+      const previous = user?.id;
+      const result = await authClient.signIn.emailOtp({ email: email.trim().toLowerCase(), otp: otp.trim() });
+      if (result.error || !result.data?.user) throw new Error(result.error?.message || 'That code could not be verified. Request a new code and try again.');
+      await rememberUser(result.data.user); setUser(result.data.user);
+      await rebindJournalOwner(previous, result.data.user.id); await rebindDraftOwner(previous, result.data.user.id); setError(undefined); await refreshDreams();
+    } finally { setLoading(false); }
+  };
+  const deleteAccount = async () => {
+    if (!user || user.isAnonymous) throw new Error('Only an email account can be deleted here.');
+    if (deleting.current) throw new Error('Account deletion is already in progress.');
+    const owner = user.id;
+    deleting.current = true; setLoading(true);
+    let acknowledged = false;
+    try {
+      if (connection.current) await connection.current;
+      const session = await ensureSession();
+      if (session.id !== owner) throw new Error('Your session changed. Reconnect to your email account before deleting it.');
+      await rebindDraftOwner(owner, owner);
+      await beginAccountDeletion(owner);
+      const result = await apiRequest<{ deleted: boolean }>('/v1/account', { method: 'DELETE' });
+      if (!result.deleted) throw new Error('Account deletion could not be confirmed. Your journal has been retained.');
+      acknowledged = true;
+      const warnings: string[] = [];
+      const journal = useJournalStore.getState();
+      const protectedFiles = [...journal.entries, ...journal.deleted].filter(entry => entry.user_id !== owner).map(entry => entry.local_audio_uri).filter((uri): uri is string => Boolean(uri));
+      try { await clearDeletedAccountJournal(owner); } catch (cause) { warnings.push(cause instanceof Error ? cause.message : 'Some journal data could not be removed from this device.'); }
+      try { await clearDeletedAccountDraft(owner, protectedFiles); } catch (cause) { warnings.push(cause instanceof Error ? cause.message : 'The draft could not be removed from this device.'); }
+      try { await forgetDeletedUser(owner); } catch { warnings.push('The account was deleted, but its saved sign-in data could not be cleared. Please restart the app.'); }
+      setUser(null);
+      const cleanupWarning = warnings.length ? warnings.join(' ') : undefined;
+      setError(cleanupWarning);
+      return { cleanupWarning };
+    } finally {
+      if (!acknowledged) cancelAccountDeletion(owner);
+      deleting.current = false; setLoading(false);
+      if (acknowledged) void reconnect();
+    }
+  };
+  return <AuthContext.Provider value={{ user, isAuthenticated: Boolean(user), isGuest: !user || Boolean(user.isAnonymous), loading, error, reconnect, sendEmailCode, verifyEmailCode, deleteAccount }}>{children}</AuthContext.Provider>;
+}

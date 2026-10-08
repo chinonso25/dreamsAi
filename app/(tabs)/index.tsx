@@ -1,135 +1,31 @@
-import { View, SafeAreaView, Pressable, ScrollView } from "react-native";
-
-import { ThemedText } from "@/components/ThemedText";
-import { router, useRouter } from "expo-router";
-import { useQuery } from "@tanstack/react-query";
-import { supabase } from "@/util/supabase";
-import { useAuth } from "@/contexts/AuthProvider";
-import { formatDate } from "@/util";
-import { MasonryFlashList } from "@shopify/flash-list";
-import { Journal } from "@/types";
-import {
-  LoadingScreen,
-  ErrorScreen,
-} from "@/components/LoadingAndErrorScreens";
-
-const renderNote = ({ item }: { item: Journal }) => {
-  const { title, summary, keywords, created_at } = item;
-
-  return (
-    <Pressable
-      style={{
-        padding: 16,
-        backgroundColor: "#f5f5f5",
-        margin: 8,
-        borderRadius: 16,
-      }}
-      onPress={() => {
-        router.push(`/Dream/${item.id}`);
-      }}
-    >
-      <ThemedText type="caption">{formatDate(created_at)}</ThemedText>
-      <ThemedText type="subtitle" style={{ fontSize: 18 }}>
-        {title}
-      </ThemedText>
-      <ScrollView horizontal>
-        {keywords?.map((keyword) => (
-          <View
-            key={keyword}
-            style={{
-              marginRight: 4,
-              marginVertical: 8,
-              padding: 4,
-              backgroundColor: "#e5e5e5",
-              borderRadius: 8,
-            }}
-          >
-            <ThemedText type="caption">{keyword}</ThemedText>
-          </View>
-        ))}
-      </ScrollView>
-      <ThemedText numberOfLines={4} ellipsizeMode="tail">
-        {summary}
-      </ThemedText>
-    </Pressable>
-  );
-};
+import { MotionPressable, MotionReveal, MotionAmbient } from '@/components/motion/Motion';
+import { useMemo } from 'react';
+import { Image, ScrollView, StyleSheet, Text, View, RefreshControl, useWindowDimensions } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
+import DreamListItem from '@/components/DreamListItem';
+import { filterDreams, journalThemes } from '@/components/journal/query';
+import { useJournalColors } from '@/components/journal/theme';
+import { useDreamJournal } from '@/components/journal/useDreamJournal';
+import { EmptyDreams, JournalNotice, pageStyles } from '@/components/journal/Page';
 
 export default function HomeScreen() {
-  const { user } = useAuth();
-  const { push } = useRouter();
-
-  const {
-    data: dreams,
-    isLoading,
-    error,
-    refetch,
-  } = useQuery<Journal[]>({
-    queryKey: ["dreams"],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("dreams")
-        .select()
-        .eq("user_id", user?.id);
-      if (error) throw error;
-      return data as Journal[];
-    },
-    enabled: Boolean(user?.id),
-  });
-
-  if (isLoading) return <LoadingScreen />;
-  if (error) return <ErrorScreen error={error as Error} retry={refetch} />;
-
-  if (!dreams?.length) {
-    return (
-      <SafeAreaView style={{ flex: 1 }}>
-        <View
-          style={{
-            flex: 1,
-            padding: 24,
-            justifyContent: "center",
-            alignItems: "center",
-            backgroundColor: "white",
-          }}
-        >
-          <ThemedText
-            type="subtitle"
-            style={{ fontSize: 24, textAlign: "center", marginBottom: 16 }}
-          >
-            Start Your Dream Journal
-          </ThemedText>
-          <ThemedText style={{ textAlign: "center", marginBottom: 24 }}>
-            Record and explore your dreams. Each entry helps you understand
-            yourself better.
-          </ThemedText>
-          <Pressable
-            style={{
-              backgroundColor: "#007AFF",
-              paddingHorizontal: 24,
-              paddingVertical: 12,
-              borderRadius: 12,
-            }}
-            onPress={() => push("/AddDream")}
-          >
-            <ThemedText style={{ color: "white", fontWeight: "600" }}>
-              Add Your First Dream
-            </ThemedText>
-          </Pressable>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  return (
-    <SafeAreaView style={{ flex: 1 }}>
-      <View style={{ flex: 1, padding: 8, backgroundColor: "white" }}>
-        <MasonryFlashList
-          data={dreams}
-          numColumns={2}
-          renderItem={renderNote}
-          estimatedItemSize={400}
-        />
-      </View>
-    </SafeAreaView>
-  );
+  const c = useJournalColors();
+  const { fontScale } = useWindowDimensions();
+  const { entries, hydrated, syncing, error, refresh, bottomSpace } = useDreamJournal();
+  const recent = useMemo(() => filterDreams(entries, {}).slice(0, 2), [entries]);
+  const themes = useMemo(() => journalThemes(entries).slice(0, 4), [entries]);
+  return <SafeAreaView edges={['top', 'left', 'right']} style={{ flex: 1, backgroundColor: c.background }}><ScrollView key={fontScale} showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={syncing} onRefresh={refresh} tintColor={c.accent} />} contentContainerStyle={[pageStyles.content, { paddingBottom: bottomSpace }]}>
+    <MotionReveal style={s.brandRow}><View style={s.wordmark}><Ionicons accessible={false} name="moon" size={19} color={c.accent} /><Text maxFontSizeMultiplier={2} style={[s.brand, { color: c.ink }]}>the dreamer</Text></View><MotionPressable accessibilityRole="button" accessibilityLabel="Open settings" onPress={() => router.push('/preferences')} style={({ pressed }) => [s.settings, { backgroundColor: c.elevated }, pressed && { opacity: .65 }]}><Ionicons accessible={false} name="settings-outline" size={21} color={c.accent} /><Text style={[s.settingsLabel, { color: c.accent }]}>Settings</Text></MotionPressable></MotionReveal>
+    <MotionReveal delay={40}><Text style={[s.date, { color: c.muted }]}>{new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}</Text>
+    <Text maxFontSizeMultiplier={2} accessibilityRole="header" style={[s.heading, { color: c.ink }]}>Your dream journal</Text></MotionReveal>
+    <MotionReveal delay={80} style={[s.hero, { backgroundColor: c.hero }]}><View style={[s.heroCopy, fontScale > 1.2 && { width: '100%' }]}><Text style={[s.heroTitle, { color: c.heroText }]}>What did you dream?</Text><Text style={s.heroBody}>Write or record what you remember.</Text><MotionPressable accessibilityRole="button" accessibilityLabel="Add a dream" onPress={() => router.push('/AddDream')} style={({ pressed }) => [s.add, pressed && { transform: [{ scale: .97 }] }]}><Ionicons accessible={false} name="add" size={19} color="#29213F" /><Text style={s.addLabel}>Add a dream</Text></MotionPressable></View>{fontScale <= 1.2 && <MotionAmbient style={s.art}><Image accessible={false} source={require('@/assets/images/onboarding/dream-moon.png')} style={{ width: '100%', height: '100%' }} resizeMode="contain" /></MotionAmbient>}</MotionReveal>
+    <JournalNotice error={error} retry={refresh} />
+    <View style={[pageStyles.row, s.sectionRow]}><Text style={[pageStyles.section, { color: c.ink }]}>Recent dreams</Text><MotionPressable accessibilityRole="button" accessibilityLabel="View journal" onPress={() => router.navigate('/(tabs)/journal')} style={s.linkButton}><Text style={[pageStyles.link, { color: c.accent }]}>View journal</Text><Ionicons accessible={false} name="arrow-forward" size={15} color={c.accent} /></MotionPressable></View>
+    {recent.map((dream, index) => <MotionReveal key={dream.id} delay={120 + index * 40}><DreamListItem dream={dream} /></MotionReveal>)}
+    {!recent.length && <EmptyDreams hydrated={hydrated} error={error} title="A space for your dreams" body="Tap Add a dream to write or record what you remember." />}
+    {themes.length > 0 && <><View style={[pageStyles.row, s.sectionRow]}><Text style={[pageStyles.section, { color: c.ink }]}>Dream themes</Text><Ionicons accessible={false} name="sparkles-outline" size={17} color={c.accent} /></View><View style={s.themes}>{themes.map(theme => <MotionPressable haptic="selection" key={theme.name} accessibilityRole="button" accessibilityLabel={`Find dreams with theme ${theme.name}`} onPress={() => router.navigate({ pathname: '/(tabs)/search', params: { theme: theme.name, themeRequest: String(Date.now()) } })} style={({ pressed }) => [s.theme, { backgroundColor: c.elevated }, pressed && { opacity: .65 }]}><Text style={[s.themeText, { color: c.accent }]}>{theme.name}</Text><Ionicons accessible={false} name="arrow-up-right-box" size={14} color={c.accent} /></MotionPressable>)}</View></>}
+  </ScrollView></SafeAreaView>;
 }
+const s = StyleSheet.create({ brandRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, marginBottom: 22, flexWrap: 'wrap', gap: 12 }, wordmark: { flexDirection: 'row', alignItems: 'center', gap: 8 }, brand: { fontFamily: 'Outfit_600SemiBold', fontSize: 21, letterSpacing: -.6 }, settingsLabel: { fontFamily: 'Outfit_500Medium', fontSize: 16 }, settings: { minHeight: 48, paddingHorizontal: 10, paddingVertical: 8, gap: 6, flexDirection: 'row', borderRadius: 16, alignItems: 'center', justifyContent: 'center' }, date: { fontFamily: 'Outfit_400Regular', fontSize: 16, marginBottom: 10 }, heading: { fontFamily: 'Outfit_600SemiBold', fontSize: 34, lineHeight: 41, letterSpacing: -1.4, marginBottom: 26 }, hero: { padding: 22, borderRadius: 26, minHeight: 202, overflow: 'hidden', marginBottom: 14 }, heroCopy: { width: '72%', zIndex: 1 }, heroTitle: { fontFamily: 'Outfit_500Medium', fontSize: 21, lineHeight: 27 }, heroBody: { fontFamily: 'Outfit_400Regular', color: '#C6BCD9', fontSize: 16, lineHeight: 24, marginTop: 9, maxWidth: 260 }, add: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 7, backgroundColor: '#E8DFFF', borderRadius: 14, minHeight: 46, paddingHorizontal: 15, marginTop: 19 }, addLabel: { fontFamily: 'Outfit_600SemiBold', fontSize: 16, color: '#29213F' }, art: { width: 110, height: 150, position: 'absolute', right: -8, bottom: 9 }, sectionRow: { marginTop: 12, marginBottom: 12 }, linkButton: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 44 }, themes: { flexDirection: 'row', flexWrap: 'wrap', gap: 9 }, theme: { flexDirection: 'row', gap: 8, alignItems: 'center', paddingHorizontal: 14, minHeight: 44, borderRadius: 14 }, themeText: { fontFamily: 'Outfit_500Medium', fontSize: 16, textTransform: 'capitalize' } });

@@ -1,427 +1,99 @@
-import { ThemedText } from "@/components/ThemedText";
-import { useAuth } from "@/contexts/AuthProvider";
-import { Journal } from "@/types";
-import { formatDate } from "@/util";
-import { supabase } from "@/util/supabase";
-import { FontAwesome6 } from "@expo/vector-icons";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useLocalSearchParams, useRouter } from "expo-router";
-import {
-  SafeAreaView,
-  ScrollView,
-  View,
-  TextInput,
-  TouchableOpacity,
-  Alert,
-  Share,
-} from "react-native";
-import { useActionSheet } from "@expo/react-native-action-sheet";
-import styled from "styled-components/native";
-import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
-import { useState, useEffect } from "react";
-import DreamAudioPlayer from "@/components/DreamAudioPlayer";
-
-declare global {
-  var showDreamActions: (() => void) | undefined;
-}
+import { haptic } from '@/util/haptics';
+import { MotionPressable, MotionReveal, MotionSelection, useMotionPreference } from '@/components/motion/Motion';
+import { useNavigation, usePreventRemove } from 'expo-router/react-navigation';
+import { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Modal, Platform, ScrollView, Share, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { MoodEnum } from '@/types';
+import { useSubscription } from '@/contexts/SubscriptionProvider';
+import { useAuth } from '@/contexts/AuthProvider';
+import { ApiError } from '@/util/api';
+import DreamAudioPlayer from '@/components/DreamAudioPlayer';
+import { DreamCalendar } from '@/components/journal/Calendar';
+import { dreamDateKey, entryTags, readableDreamDate } from '@/components/journal/query';
+import { useJournalColors } from '@/components/journal/theme';
+import { useJournalStore, updateDream, deleteDream, retryDream, requestDreamProcessing, getAudioUri, refreshDreams, hydrateJournal } from '@/util/journal';
 
 export default function Dream() {
-  const { user } = useAuth();
-  const { id: dreamId } = useLocalSearchParams();
-  const { invalidateQueries } = useQueryClient();
+  const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const [isEditing, setIsEditing] = useState(false);
-  const [editedTitle, setEditedTitle] = useState("");
-  const [editedTranscript, setEditedTranscript] = useState("");
-  const [newTag, setNewTag] = useState("");
-  const [editedKeywords, setEditedKeywords] = useState<string[]>([]);
-  const { showActionSheetWithOptions } = useActionSheet();
-
-  const {
-    data: dream,
-    isLoading,
-    error,
-  } = useQuery<Journal>({
-    queryKey: ["dream", dreamId],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("dreams")
-        .select()
-        .eq("user_id", user?.id)
-        .eq("id", dreamId);
-
-      if (error) throw error;
-      return data?.[0] as Journal;
-    },
-    enabled: Boolean(user?.id) && Boolean(dreamId),
+  const scroll = useRef<ScrollView>(null);
+  const navigation = useNavigation();
+  const colors = useJournalColors();
+  const { fontScale } = useWindowDimensions();
+  const reduced = useMotionPreference();
+  const backToJournal = () => router.canGoBack() ? router.back() : router.replace('/(tabs)/journal');
+  const insets = useSafeAreaInsets();
+  const { ensurePremium } = useSubscription();
+  const { user } = useAuth();
+  const dream = useJournalStore(state => state.entries.find(entry => String(entry.id) === id && (entry.user_id === user?.id || entry.user_id === 'device')));
+  const hydrated = useJournalStore(state => state.hydrated);
+  const journalError = useJournalStore(state => state.error);
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState('');
+  const [transcript, setTranscript] = useState('');
+  const [tags, setTags] = useState('');
+  const [date, setDate] = useState('');
+  const [mood, setMood] = useState<MoodEnum>();
+  const [datePicker, setDatePicker] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [audio, setAudio] = useState<{ entryId?: string; uri?: string; error?: string }>({});
+  const [audioAttempt, setAudioAttempt] = useState(0);
+  const audioKey = dream?.audio_key;
+  const localAudio = dream?.local_audio_uri;
+  const remoteAudio = dream?.audio_url;
+  const hasUnsavedChanges = Boolean(editing && dream && (title !== (dream.title || '') || transcript !== dream.transcript || tags !== entryTags(dream).join(', ') || date !== dreamDateKey(dream) || mood !== dream.mood));
+  usePreventRemove(hasUnsavedChanges, ({ data }) => {
+    Alert.alert('Leave without saving?', 'Your changes have not been saved.', [{ text: 'Keep editing', style: 'cancel' }, { text: 'Leave', onPress: () => navigation.dispatch(data.action) }]);
   });
-
   useEffect(() => {
-    if (dream) {
-      setEditedTitle(dream.title || "");
-      setEditedTranscript(dream.transcript || "");
-      setEditedKeywords(dream.keywords || []);
-    }
-  }, [dream]);
-
-  const updateDreamMutation = useMutation({
-    mutationFn: async (updatedDream: Partial<Journal>) => {
-      const { data, error } = await supabase
-        .from("dreams")
-        .update(updatedDream)
-        .eq("id", dreamId)
-        .eq("user_id", user?.id);
-
-      if (error) throw error;
-      return data;
-    },
-    onSuccess: () => {
-      invalidateQueries({ queryKey: ["dream", dreamId] });
-      invalidateQueries({ queryKey: ["dreams"] });
-      setIsEditing(false);
-      Alert.alert("Success", "Dream updated successfully");
-    },
-    onError: (error) => {
-      Alert.alert("Error", "Failed to update dream");
-      console.error(error);
-    },
-  });
-
-  const handleSave = () => {
-    updateDreamMutation.mutate({
-      title: editedTitle,
-      transcript: editedTranscript,
-      keywords: editedKeywords,
-      updated_at: new Date().toISOString(),
-    });
-  };
-
-  const handleAddTag = () => {
-    if (newTag.trim() && !editedKeywords.includes(newTag.trim())) {
-      setEditedKeywords([...editedKeywords, newTag.trim()]);
-      setNewTag("");
-    }
-  };
-
-  const handleRemoveTag = (tagToRemove: string) => {
-    setEditedKeywords(editedKeywords.filter((tag) => tag !== tagToRemove));
-  };
-
-  const player = useAudioPlayer(
-    "https://clhdhfxpgdyhytgpyvvk.supabase.co/storage/v1/object/sign/dreams/81d8f772-694c-400a-91b5-ad525417af07/recording-D0C6EE5A-02B5-4A2E-B73B-F4460BD873BE.m4a?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1cmwiOiJkcmVhbXMvODFkOGY3NzItNjk0Yy00MDBhLTkxYjUtYWQ1MjU0MTdhZjA3L3JlY29yZGluZy1EMEM2RUU1QS0wMkI1LTRBMkUtQjczQi1GNDQ2MEJEODczQkUubTRhIiwiaWF0IjoxNzM1MDk3MzYwLCJleHAiOjE3MzU3MDIxNjB9.-8Zz60kailT9dIy3cPOioGvDRvSBpXlfW7hB5jz37f8&t=2024-12-25T03%3A29%3A20.595Z"
-  );
-
-  const playerStatus = useAudioPlayerStatus(player);
-
-  const deleteDreamMutation = useMutation({
-    mutationFn: async () => {
-      // First delete the audio file if it exists
-      if (dream?.audio_url) {
-        // Extract the file path from the URL
-        const audioPath = dream.audio_url.split("/dreams/")[1]?.split("?")[0];
-        if (audioPath) {
-          const { error: storageError } = await supabase.storage
-            .from("dreams")
-            .remove([audioPath]);
-
-          if (storageError) {
-            console.error("Failed to delete audio file:", storageError);
-          }
-        }
-      }
-
-      // Then delete the dream record
-      const { error } = await supabase
-        .from("dreams")
-        .delete()
-        .eq("id", dreamId)
-        .eq("user_id", user?.id);
-
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      invalidateQueries({ queryKey: ["dreams"] });
-      router.back();
-      Alert.alert("Success", "Dream deleted successfully");
-    },
-    onError: (error) => {
-      Alert.alert("Error", "Failed to delete dream");
-      console.error(error);
-    },
-  });
-
-  const toggleFavoriteMutation = useMutation({
-    mutationFn: async () => {
-      const { error } = await supabase
-        .from("dreams")
-        .update({ is_starred: !dream?.is_starred })
-        .eq("id", dreamId)
-        .eq("user_id", user?.id);
-
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      invalidateQueries({ queryKey: ["dream", dreamId] });
-      invalidateQueries({ queryKey: ["dreams"] });
-    },
-    onError: (error) => {
-      Alert.alert("Error", "Failed to update star status");
-      console.error(error);
-    },
-  });
-
-  const handleShare = async () => {
-    try {
-      await Share.share({
-        title: dream?.title || "Dream",
-        message: `${dream?.title}\n\n${dream?.transcript || ""}`,
-      });
-    } catch (error) {
-      console.error(error);
-    }
-  };
-
-  const showActionSheet = () => {
-    const options = [
-      "Cancel",
-      "Delete",
-      "Share",
-      dream?.is_starred ? "Remove Star" : "Star Dream",
-    ];
-    const destructiveButtonIndex = 1;
-    const cancelButtonIndex = 0;
-
-    showActionSheetWithOptions(
-      {
-        options,
-        cancelButtonIndex,
-        destructiveButtonIndex,
-      },
-      (selectedIndex) => {
-        if (selectedIndex === 1) {
-          Alert.alert(
-            "Delete Dream",
-            "Are you sure you want to delete this dream? This action cannot be undone.",
-            [
-              { text: "Cancel", style: "cancel" },
-              {
-                text: "Delete",
-                style: "destructive",
-                onPress: () => deleteDreamMutation.mutate(),
-              },
-            ]
-          );
-        } else if (selectedIndex === 2) {
-          handleShare();
-        } else if (selectedIndex === 3) {
-          toggleFavoriteMutation.mutate();
-        }
-      }
-    );
-  };
-
-  useEffect(() => {
-    global.showDreamActions = showActionSheet;
-    return () => {
-      global.showDreamActions = undefined;
-    };
-  }, [dream?.is_starred]);
-
-  if (error && isLoading) return null;
-
-  const { title, keywords, created_at, transcript, audio_url } = dream || {};
-
-  return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: "white" }}>
-      <HeaderDivider />
-      <HeaderContainer>
-        {isEditing ? (
-          <TextInput
-            value={editedTitle}
-            onChangeText={setEditedTitle}
-            style={{
-              fontSize: 24,
-              fontFamily: "Outfit_600SemiBold",
-              padding: 4,
-              borderWidth: 1,
-              borderColor: "#e5e5e5",
-              borderRadius: 4,
-              marginBottom: 8,
-            }}
-          />
-        ) : (
-          <ThemedText type="title" style={{ fontSize: 24 }}>
-            {title}
-          </ThemedText>
-        )}
-        <HeaderContentContainer>
-          <ThemedText type="caption">Date</ThemedText>
-          <View style={{ marginHorizontal: 8 }} />
-          <ThemedText>{formatDate(created_at!)}</ThemedText>
-        </HeaderContentContainer>
-
-        <HeaderContentContainer>
-          <ThemedText type="caption">Tags</ThemedText>
-          {isEditing ? (
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                marginLeft: 8,
-              }}
-            >
-              <TextInput
-                value={newTag}
-                onChangeText={setNewTag}
-                placeholder="Add tag"
-                style={{
-                  padding: 4,
-                  borderWidth: 1,
-                  borderColor: "#e5e5e5",
-                  borderRadius: 4,
-                  marginRight: 8,
-                  minWidth: 100,
-                }}
-                onSubmitEditing={handleAddTag}
-              />
-              <TouchableOpacity onPress={handleAddTag}>
-                <FontAwesome6 name="plus" size={20} color="black" />
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <AddTagButton onPress={() => setIsEditing(true)}>
-              <FontAwesome6 name="circle-plus" size={24} color="black" />
-            </AddTagButton>
-          )}
-          <View style={{ marginHorizontal: 8 }} />
-
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {(isEditing ? editedKeywords : keywords || []).map(
-              (keyword: string) => (
-                <TagContainer key={keyword}>
-                  <Tag>{keyword}</Tag>
-                  {isEditing && (
-                    <TouchableOpacity
-                      onPress={() => handleRemoveTag(keyword)}
-                      style={{ marginLeft: 4 }}
-                    >
-                      <FontAwesome6 name="times" size={12} color="black" />
-                    </TouchableOpacity>
-                  )}
-                </TagContainer>
-              )
-            )}
-          </ScrollView>
-        </HeaderContentContainer>
-        {/* {audio_url && <DreamAudioPlayer audio_url={audio_url} />} */}
-      </HeaderContainer>
-
-      <ScrollView>
-        <TextContainer>
-          {isEditing ? (
-            <TextInput
-              value={editedTranscript}
-              onChangeText={setEditedTranscript}
-              multiline
-              style={{
-                fontFamily: "Outfit_400Regular",
-                padding: 4,
-                borderWidth: 1,
-                borderColor: "#e5e5e5",
-                borderRadius: 4,
-                minHeight: 200,
-              }}
-            />
-          ) : (
-            <ThemedText>{transcript}</ThemedText>
-          )}
-        </TextContainer>
-      </ScrollView>
-
-      <ActionButtonContainer>
-        {isEditing ? (
-          <>
-            <ActionButton onPress={handleSave}>
-              <ThemedText style={{ color: "white" }}>Save</ThemedText>
-            </ActionButton>
-            <ActionButton
-              onPress={() => setIsEditing(false)}
-              style={{ backgroundColor: "#666" }}
-            >
-              <ThemedText style={{ color: "white" }}>Cancel</ThemedText>
-            </ActionButton>
-          </>
-        ) : (
-          <ActionButton onPress={() => setIsEditing(true)}>
-            <ThemedText style={{ color: "white" }}>Edit</ThemedText>
-          </ActionButton>
-        )}
-      </ActionButtonContainer>
-    </SafeAreaView>
-  );
+    let active = true;
+    if (!audioKey && !localAudio && !remoteAudio) return;
+    void getAudioUri(id).then(uri => { if (active) setAudio(uri ? { entryId: id, uri } : { entryId: id, error: 'Your recording is not available yet. Sync this dream and try again.' }); }).catch(() => { if (active) setAudio({ entryId: id, error: 'Could not load your recording. Your dream is still saved.' }); });
+    return () => { active = false; };
+  }, [id, audioKey, localAudio, remoteAudio, audioAttempt]);
+  const run = async (action: () => Promise<void>) => { if (busy) return; setBusy(true); setError(''); try { await action(); } catch (cause) { haptic('error'); setError(cause instanceof Error ? cause.message : 'Could not complete that action. Please try again.'); } finally { setBusy(false); } };
+  const processingAction = (action: () => Promise<void>) => run(async () => { try { await action(); } catch (cause) { if (cause instanceof ApiError && cause.status === 402) { if (await ensurePremium()) await action(); } else throw cause; } });
+  const startEditing = () => { if (!dream) return; setTitle(dream.title || ''); setTranscript(dream.transcript); setTags(entryTags(dream).join(', ')); setDate(dreamDateKey(dream)); setMood(dream.mood); setEditing(true); scroll.current?.scrollTo({ y: 0, animated: !reduced }); };
+  const save = () => run(async () => { if (!dream) return; if (!transcript.trim() && !dream.local_audio_uri && !dream.audio_key) throw new Error('Add a few words before saving.'); const values = [...new Set(tags.split(',').map(value => value.trim()).filter(Boolean))]; await updateDream(id, { title: title.trim() || 'A dream to remember', transcript: transcript.trim(), tags: values, keywords: values, dream_date: date, mood }); setEditing(false); scroll.current?.scrollTo({ y: 0, animated: !reduced }); haptic('success'); });
+  const remove = () => Alert.alert('Delete this dream?', 'This removes the entry and its recording from your journal.', [{ text: 'Keep dream', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: () => { void run(async () => { await deleteDream(id); router.replace('/(tabs)/journal'); }); } }]);
+  const share = () => run(async () => { if (!dream) return; await Share.share({ title: dream.title || 'My dream', message: `${dream.title || 'My dream'}\n${readableDreamDate(dreamDateKey(dream))}\n\n${dream.transcript || dream.original_text || ''}${dream.summary ? `\n\nSummary\n${dream.summary}` : ''}` }); });
+  const iconButton = (icon: keyof typeof Ionicons.glyphMap, label: string, action: () => void, active = false, disabled = busy) => <MotionPressable accessibilityRole="button" accessibilityLabel={label} onPress={action} disabled={disabled} style={[styles.iconButton, { backgroundColor: active ? colors.accentSoft : colors.surface, borderColor: colors.border }, icon === 'trash-outline' && styles.deleteButton]}><MotionSelection selected={active}><Ionicons accessible={false} name={icon} size={21} color={active ? colors.accent : colors.ink} /></MotionSelection>{icon === 'trash-outline' && <Text style={[styles.buttonText, { color: colors.danger }]}>Delete</Text>}</MotionPressable>;
+  const section = (label: string, text?: string, highlighted = false) => text ? <View style={[styles.section, highlighted && { backgroundColor: colors.elevated, padding: 22, borderRadius: 23 }]}><View style={styles.sectionHeading}>{highlighted && <Ionicons accessible={false} name="sparkles-outline" size={17} color={colors.accent} />}<Text style={[styles.sectionLabel, { color: highlighted ? colors.accent : colors.muted }]}>{label}</Text></View><Text selectable style={[styles.body, { color: colors.ink }]}>{text}</Text></View> : null;
+  if (!hydrated) return <SafeAreaView style={[styles.screen, { backgroundColor: colors.background, padding: 25 }]}>{journalError ? <>{iconButton('arrow-back', 'Back to journal', backToJournal, false, false)}<Text style={[styles.title, { color: colors.ink }]}>Could not open your journal</Text><Text style={[styles.body, { color: colors.muted }]}>{journalError}</Text><MotionPressable accessibilityRole="button" onPress={() => { void run(hydrateJournal); }} style={[styles.primaryButton, { backgroundColor: colors.accent, marginTop: 20 }]}><Text style={[styles.buttonText, { color: colors.background }]}>Retry</Text></MotionPressable></> : <ActivityIndicator color={colors.accent} style={{ marginTop: 60 }} />}</SafeAreaView>;
+  if (!dream) return <SafeAreaView style={[styles.screen, { backgroundColor: colors.background, padding: 25 }]}>{iconButton('arrow-back', 'Back to journal', backToJournal, false, false)}<Text style={[styles.title, { color: colors.ink, marginTop: 35 }]}>Dream unavailable</Text><Text style={[styles.body, { color: colors.muted }]}>This entry may have been removed or may need to sync.</Text><MotionPressable accessibilityRole="button" onPress={() => { void run(refreshDreams); }} style={[styles.primaryButton, { backgroundColor: colors.accent, marginTop: 20 }]}><Text style={[styles.buttonText, { color: colors.background }]}>{busy ? 'Refreshing…' : 'Refresh journal'}</Text></MotionPressable>{error !== '' && <Text style={[styles.errorText, { color: colors.danger }]}>{error}</Text>}</SafeAreaView>;
+  const needsAttention = dream.sync_status === 'error' || dream.processing_status === 'error';
+  const processing = dream.processing_status === 'pending' || dream.processing_status === 'processing';
+  return <SafeAreaView edges={['top']} style={[styles.screen, { backgroundColor: colors.background }]}><KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <MotionReveal key={`toolbar:${fontScale}`} style={styles.toolbar}><MotionPressable accessibilityRole="button" accessibilityLabel="Back" onPress={backToJournal} style={styles.toolbarButton}><Ionicons accessible={false} name="arrow-back" size={21} color={colors.accent} /><Text style={[styles.buttonText, { color: colors.accent }]}>Back</Text></MotionPressable>{!editing && <MotionPressable accessibilityRole="button" accessibilityLabel="Share dream" disabled={busy} onPress={() => { void share(); }} style={styles.toolbarButton}><Ionicons accessible={false} name="share-outline" size={20} color={colors.accent} /><Text style={[styles.buttonText, { color: colors.accent }]}>Share</Text></MotionPressable>}</MotionReveal>
+    <ScrollView ref={scroll} key={fontScale} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 30 }]}>
+      <View style={styles.dateRow}><Ionicons accessible={false} name="moon-outline" size={15} color={colors.accent} /><Text style={[styles.dateText, { color: colors.accent }]}>{readableDreamDate(editing ? date : dreamDateKey(dream))}</Text>{editing && <MotionPressable accessibilityRole="button" onPress={() => setDatePicker(true)} style={styles.dateEdit}><Text style={[styles.link, { color: colors.accent }]}>Change</Text></MotionPressable>}</View>
+      {editing ? <TextInput accessibilityLabel="Dream title" value={title} onChangeText={setTitle} placeholder="Give this dream a name" placeholderTextColor={colors.muted} style={[styles.titleInput, { color: colors.ink, borderColor: colors.border, backgroundColor: colors.surface }]} /> : <Text selectable accessibilityRole="header" style={[styles.title, { color: colors.ink }]}>{dream.title || 'A dream to remember'}</Text>}
+      <View style={[styles.saved, { borderColor: colors.border }]}><Ionicons accessible={false} name={editing ? 'create-outline' : needsAttention ? 'alert-circle-outline' : dream.sync_status === 'synced' ? 'cloud-done-outline' : 'phone-portrait-outline'} size={17} color={needsAttention ? colors.warning : colors.success} /><Text style={[styles.savedText, { color: colors.muted }]}>{editing ? 'Tap Save changes when you’re done.' : dream.sync_status === 'synced' ? 'Dream saved' : dream.sync_status === 'syncing' ? 'Saved on this device · syncing' : 'Saved on this device'}{!editing && processing ? ' · preparing your dream' : ''}</Text></View>
+      {(needsAttention || error !== '') && <View style={[styles.notice, { backgroundColor: colors.elevated }]}><Text style={[styles.noticeTitle, { color: colors.ink }]}>Saved on this device</Text><Text style={[styles.note, { color: colors.muted }]}>{error || dream.last_error || 'An interruption stopped saving or preparing your dream. Try again to continue.'}</Text><MotionPressable accessibilityRole="button" disabled={busy} onPress={() => { void processingAction(() => retryDream(id)); }} style={styles.retry}><Ionicons accessible={false} name="refresh" size={15} color={colors.accent} /><Text style={[styles.link, { color: colors.accent }]}>{busy ? 'Retrying…' : 'Try again'}</Text></MotionPressable></View>}
+      {!editing && <MotionPressable accessibilityRole="checkbox" accessibilityLabel="Favorite dream" accessibilityState={{ checked: Boolean(dream.is_starred) }} disabled={busy} onPress={() => { void run(() => updateDream(id, { is_starred: !dream.is_starred })); }} style={[styles.favorite, { backgroundColor: colors.elevated }]}><MotionSelection selected={Boolean(dream.is_starred)}><Ionicons accessible={false} name={dream.is_starred ? 'star' : 'star-outline'} size={21} color={colors.accent} /></MotionSelection><Text style={[styles.buttonText, { color: colors.accent }]}>{dream.is_starred ? 'Favorited' : 'Favorite'}</Text></MotionPressable>}
+      {editing ? <>
+        <Text style={[styles.sectionLabel, { color: colors.muted }]}>Your words</Text><TextInput accessibilityLabel="Dream text" multiline value={transcript} onChangeText={setTranscript} textAlignVertical="top" placeholder="What do you remember?" placeholderTextColor={colors.muted} style={[styles.transcriptInput, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.ink }]} />
+        <Text style={[styles.sectionLabel, { color: colors.muted }]}>Themes (separate with commas)</Text><TextInput accessibilityLabel="Dream tags" value={tags} onChangeText={setTags} placeholder="Ocean, flying, familiar places" placeholderTextColor={colors.muted} style={[styles.input, { color: colors.ink, borderColor: colors.border, backgroundColor: colors.surface }]} />
+        <Text style={[styles.sectionLabel, { color: colors.muted }]}>How did it feel?</Text><View style={styles.tags}>{Object.values(MoodEnum).map(value => <MotionPressable haptic="selection" key={value} accessibilityRole="button" accessibilityState={{ selected: mood === value }} onPress={() => setMood(mood === value ? undefined : value)} style={[styles.tag, { backgroundColor: mood === value ? colors.accentSoft : colors.surface, borderColor: mood === value ? colors.accent : colors.border }]}><Text style={[styles.tagText, { color: mood === value ? colors.accent : colors.muted }]}>{value}</Text></MotionPressable>)}</View>
+        <View style={styles.editButtons}><MotionPressable accessibilityRole="button" disabled={busy} haptic="none" onPress={() => { void save(); }} style={[styles.primaryButton, { backgroundColor: colors.accent, flexGrow: 1, flexBasis: 160 }]}><Text style={[styles.buttonText, { color: colors.background }]}>{busy ? 'Saving…' : 'Save changes'}</Text></MotionPressable><MotionPressable accessibilityRole="button" disabled={busy} onPress={() => { setEditing(false); scroll.current?.scrollTo({ y: 0, animated: !reduced }); }} style={[styles.secondaryButton, { borderColor: colors.border }]}><Text style={[styles.buttonText, { color: colors.muted }]}>Cancel</Text></MotionPressable></View>
+      </> : <>
+        {(dream.mood || entryTags(dream).length > 0) && <View style={styles.tags}>{dream.mood && <View style={[styles.tag, { backgroundColor: colors.accentSoft, borderColor: colors.accentSoft }]}><Ionicons accessible={false} name="heart-outline" size={13} color={colors.accent} /><Text style={[styles.tagText, { color: colors.accent }]}>{dream.mood}</Text></View>}{entryTags(dream).map(value => <MotionPressable haptic="selection" key={value} accessibilityRole="button" accessibilityLabel={`Find dreams with theme ${value}`} onPress={() => router.push({ pathname: '/(tabs)/search', params: { theme: value, themeRequest: String(Date.now()) } })} style={[styles.tag, { borderColor: colors.border, backgroundColor: colors.surface }]}><Text style={[styles.tagText, { color: colors.muted }]}>{value}</Text></MotionPressable>)}</View>}
+        {(localAudio || audioKey || remoteAudio) && <View style={styles.audioSection}><Text style={[styles.sectionLabel, { color: colors.muted }]}>Your recording</Text>{audio.entryId === id && audio.uri ? <DreamAudioPlayer key={`${id}:${audio.uri}`} audio_url={audio.uri} id={id} ownerId={dream.user_id} title={dream.title} duration={dream.audio_length} /> : audio.entryId === id && audio.error ? <View style={[styles.notice, { backgroundColor: colors.elevated }]}><Text style={[styles.note, { color: colors.muted }]}>{audio.error}</Text><MotionPressable accessibilityRole="button" onPress={() => setAudioAttempt(attempt => attempt + 1)} style={styles.retry}><Text style={[styles.link, { color: colors.accent }]}>Retry recording</Text></MotionPressable></View> : <ActivityIndicator color={colors.accent} style={{ margin: 15 }} />}</View>}
+        {section('Dream summary', dream.summary, true)}
+        {section(dream.original_text && dream.original_text !== dream.transcript ? 'Recording text' : 'Your words', dream.transcript)}
+        {dream.original_text && dream.original_text !== dream.transcript && section('Original words', dream.original_text)}
+        {!dream.transcript && <View style={styles.section}><Text style={[styles.body, { color: colors.muted }]}>{processing ? 'Your recording is saved. Its text will appear here when ready.' : 'Listen to your recording above, or turn it into text below.'}</Text></View>}
+        {(dream.processing_status === 'idle' || (!dream.summary && !processing && !needsAttention)) && <View style={[styles.notice, { backgroundColor: colors.elevated }]}><View style={styles.sectionHeading}><Ionicons accessible={false} name="sparkles-outline" size={18} color={colors.accent} /><Text style={[styles.noticeTitle, { color: colors.ink }]}>{!dream.transcript ? 'Recording to text' : 'Dream summary'}</Text></View><Text style={[styles.note, { color: colors.muted }]}>{!dream.transcript ? 'Write out your recording and add a short summary. Your audio stays saved.' : 'Add a short summary and tags. Your words stay saved.'}</Text><MotionPressable accessibilityRole="button" disabled={busy} onPress={() => { void processingAction(() => requestDreamProcessing(id)); }} style={[styles.primaryButton, { backgroundColor: colors.accent, marginTop: 16 }]}><Text style={[styles.buttonText, { color: colors.background }]}>{busy ? 'Starting…' : !dream.transcript ? 'Turn recording into text' : 'Summarize dream'}</Text></MotionPressable></View>}
+        {processing && !dream.summary && <View style={[styles.notice, { backgroundColor: colors.elevated }]}><View style={styles.sectionHeading}><ActivityIndicator color={colors.accent} size="small" /><Text style={[styles.noticeTitle, { color: colors.ink }]}>Working on your dream</Text></View><Text style={[styles.note, { color: colors.muted }]}>You can leave this screen. Your dream will update when it’s ready.</Text></View>}
+        <View style={styles.editButtons}><MotionPressable accessibilityRole="button" disabled={busy} onPress={startEditing} style={[styles.primaryButton, { backgroundColor: colors.accent, flexGrow: 1, flexBasis: 160 }]}><Ionicons accessible={false} name="create-outline" size={18} color={colors.background} /><Text style={[styles.buttonText, { color: colors.background }]}>Edit dream</Text></MotionPressable>{iconButton('trash-outline', 'Delete dream', remove)}</View>
+        <Text style={[styles.footnote, { color: colors.muted }]}>Captured {new Date(dream.created_at).toLocaleDateString('en-GB', { dateStyle: 'medium' })}. The date above is when your dream happened.</Text>
+      </>}
+    </ScrollView>
+    <Modal transparent visible={datePicker} animationType={reduced ? 'fade' : 'slide'} onRequestClose={() => setDatePicker(false)}><View style={styles.modalBackdrop}><SafeAreaView edges={['bottom']} style={[styles.modal, { backgroundColor: colors.background }]}><View style={styles.modalHeading}><Text style={[styles.noticeTitle, { color: colors.ink }]}>When did you dream?</Text><MotionPressable accessibilityRole="button" accessibilityLabel="Close date picker" onPress={() => setDatePicker(false)} style={styles.iconButton}><Ionicons accessible={false} name="close" size={24} color={colors.ink} /></MotionPressable></View><DreamCalendar selectedDate={date} allowFuture={false} onSelect={value => { setDate(value); setDatePicker(false); }} /></SafeAreaView></View></Modal>
+  </KeyboardAvoidingView></SafeAreaView>;
 }
-
-const TextContainer = styled.View({
-  padding: 16,
-});
-
-const HeaderContainer = styled.View({
-  padding: 16,
-  borderBottomWidth: 1,
-  borderBottomColor: "#e5e5e5",
-  borderTopWidth: 1,
-  borderTopColor: "#e5e5e5",
-});
-
-const HeaderDivider = styled.View({
-  flexDirection: "row",
-  borderBottomWidth: 1,
-  borderColor: "#e5e5e5",
-});
-
-const Tag = styled(ThemedText)`
-  background-color: #f0f0f0;
-  padding: 4px 8px;
-  border-radius: 16px;
-  margin-right: 8px;
-`;
-
-const AddTagButton = styled.Pressable({
-  marginLeft: 8,
-});
-
-const HeaderContentContainer = styled.View({
-  flexDirection: "row",
-  alignItems: "center",
-  marginVertical: 4,
-});
-
-const TagContainer = styled.View({
-  flexDirection: "row",
-  alignItems: "center",
-  backgroundColor: "#f0f0f0",
-  padding: 4,
-  paddingHorizontal: 8,
-  borderRadius: 16,
-  marginRight: 8,
-});
-
-const ActionButtonContainer = styled.View({
-  flexDirection: "row",
-  justifyContent: "center",
-  gap: 8,
-  padding: 16,
-  backgroundColor: "white",
-  borderTopWidth: 1,
-  borderTopColor: "#e5e5e5",
-});
-
-const ActionButton = styled.TouchableOpacity({
-  backgroundColor: "black",
-  paddingVertical: 8,
-  paddingHorizontal: 16,
-  borderRadius: 8,
-  alignItems: "center",
-  justifyContent: "center",
-  minWidth: 100,
-});
+const styles = StyleSheet.create({ screen: { flex: 1 }, deleteButton: { width: 'auto', height: 'auto', minHeight: 52, paddingHorizontal: 14, paddingVertical: 14, flexDirection: 'row', gap: 8 }, toolbar: { paddingHorizontal: 20, paddingTop: 9, paddingBottom: 17, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, toolbarButton: { minHeight: 48, paddingHorizontal: 4, paddingVertical: 8, flexDirection: 'row', gap: 8, alignItems: 'center' }, favorite: { alignSelf: 'flex-start', minHeight: 48, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 14, flexDirection: 'row', gap: 8, alignItems: 'center', marginBottom: 20 }, toolbarTitle: { fontFamily: 'Outfit_500Medium', fontSize: 16 }, actions: { flexDirection: 'row', gap: 8 }, iconButton: { borderWidth: 1, borderRadius: 15, width: 44, height: 44, justifyContent: 'center', alignItems: 'center' }, content: { paddingHorizontal: 25, width: '100%', maxWidth: 680, alignSelf: 'center' }, dateRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, alignItems: 'center', marginVertical: 8 }, dateText: { fontFamily: 'Outfit_500Medium', fontSize: 16 }, dateEdit: { padding: 12 }, title: { fontFamily: 'Outfit_600SemiBold', fontSize: 36, lineHeight: 43, letterSpacing: -1.2, marginTop: 8, marginBottom: 19 }, titleInput: { fontFamily: 'Outfit_600SemiBold', fontSize: 25, padding: 15, borderWidth: 1, borderRadius: 17, marginVertical: 12 }, saved: { flexDirection: 'row', gap: 7, alignItems: 'center', borderBottomWidth: 1, paddingBottom: 19, marginBottom: 20 }, savedText: { fontFamily: 'Outfit_400Regular', fontSize: 14, flex: 1 }, tags: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 24 }, tag: { borderWidth: 1, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 5, minHeight: 48 }, tagText: { fontFamily: 'Outfit_500Medium', fontSize: 14, textTransform: 'capitalize' }, section: { marginBottom: 28 }, sectionHeading: { flexDirection: 'row', gap: 8, alignItems: 'center', marginBottom: 12 }, sectionLabel: { fontFamily: 'Outfit_500Medium', fontSize: 16, marginBottom: 11 }, body: { fontFamily: 'Outfit_400Regular', fontSize: 17, lineHeight: 28 }, audioSection: { marginBottom: 25 }, notice: { padding: 18, borderRadius: 20, marginBottom: 22 }, noticeTitle: { fontFamily: 'Outfit_600SemiBold', fontSize: 17, marginBottom: 6 }, note: { fontFamily: 'Outfit_400Regular', fontSize: 16, lineHeight: 24 }, retry: { flexDirection: 'row', gap: 7, paddingTop: 13, alignItems: 'center', minHeight: 44 }, link: { fontFamily: 'Outfit_600SemiBold', fontSize: 16 }, input: { padding: 15, borderWidth: 1, borderRadius: 17, marginBottom: 24, fontFamily: 'Outfit_400Regular', fontSize: 17 }, transcriptInput: { borderWidth: 1, padding: 18, borderRadius: 20, minHeight: 240, fontFamily: 'Outfit_400Regular', fontSize: 16, lineHeight: 26, marginBottom: 25 }, primaryButton: { minHeight: 52, paddingVertical: 14, paddingHorizontal: 18, borderRadius: 17, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }, secondaryButton: { minHeight: 52, paddingVertical: 14, paddingHorizontal: 18, borderRadius: 17, borderWidth: 1, justifyContent: 'center' }, buttonText: { fontFamily: 'Outfit_600SemiBold', fontSize: 17 }, editButtons: { flexDirection: 'row', flexWrap: 'wrap', gap: 11, alignItems: 'center', marginVertical: 16 }, footnote: { fontFamily: 'Outfit_400Regular', fontSize: 14, lineHeight: 21, marginTop: 13 }, errorText: { fontFamily: 'Outfit_400Regular', fontSize: 14, marginTop: 15 }, modalBackdrop: { flex: 1, backgroundColor: '#100A2470', justifyContent: 'flex-end' }, modal: { padding: 22, borderTopLeftRadius: 30, borderTopRightRadius: 30 }, modalHeading: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 } });

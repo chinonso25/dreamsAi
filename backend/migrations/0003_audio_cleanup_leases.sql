@@ -1,0 +1,1 @@
+ALTER TABLE audio_cleanup ADD COLUMN not_before INTEGER NOT NULL DEFAULT 0;

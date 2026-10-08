@@ -1,90 +1,28 @@
-import { View, StyleSheet, Pressable } from "react-native";
-import React from "react";
-import { BlurView } from "expo-blur";
-import { IconSymbol } from "./ui/IconSymbol";
-import { Text } from "react-native";
-import { Colors } from "@/constants/Colors";
-import { useColorScheme } from "@/hooks/useColorScheme";
-import { usePathname, router } from "expo-router";
+import { MotionPressable, MotionSelection } from '@/components/motion/Motion';
+import { Keyboard, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { usePathname, router } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useJournalColors } from './journal/theme';
 
-type Route = "/(tabs)" | "/(tabs)/explore" | "/AddDream" | "/(tabs)/settings";
-
-export function TabBar() {
-  const colorScheme = useColorScheme();
-  const tintColor = Colors[colorScheme ?? "light"].tint;
-  const pathname = usePathname();
-
-  const tabs = [
-    { name: "Home", icon: "house.fill" as const, route: "/(tabs)" as Route },
-
-    { name: "Add Dream", icon: "plus" as const, route: "/AddDream" as Route },
-    {
-      name: "Profile",
-      icon: "person.fill" as const,
-      route: "/(tabs)/settings" as Route,
-    },
-  ];
-
-  return (
-    <View style={styles.container}>
-      <BlurView intensity={30} style={styles.blur}>
-        <View style={styles.content}>
-          {tabs.map((tab) => (
-            <Pressable
-              key={tab.name}
-              style={styles.tab}
-              onPress={() => router.push(tab.route)}
-            >
-              <IconSymbol
-                name={tab.icon}
-                size={24}
-                color={pathname === tab.route ? tintColor : "#9CA3AF"}
-              />
-              <Text
-                style={[
-                  styles.label,
-                  {
-                    color: pathname === tab.route ? tintColor : "#9CA3AF",
-                  },
-                ]}
-              >
-                {tab.name}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-      </BlurView>
-    </View>
-  );
+const tabs = [
+  { label: 'Home', path: '/', route: '/(tabs)', icon: 'home', outline: 'home-outline' },
+  { label: 'Journal', path: '/journal', route: '/(tabs)/journal', icon: 'book', outline: 'book-outline' },
+  { label: 'Search', path: '/search', route: '/(tabs)/search', icon: 'search', outline: 'search-outline' },
+] as const;
+export function useTabBarHeight() {
+  const { fontScale } = useWindowDimensions();
+  return Math.max(82, 54 + Math.ceil(18 * fontScale));
 }
-
-const styles = StyleSheet.create({
-  container: {
-    position: "absolute",
-    bottom: 30,
-    left: 20,
-    right: 20,
-    height: 65,
-  },
-  blur: {
-    borderRadius: 32,
-    overflow: "hidden",
-    height: "100%",
-  },
-  content: {
-    flexDirection: "row",
-    height: "100%",
-    alignItems: "center",
-    justifyContent: "space-around",
-  },
-  tab: {
-    alignItems: "center",
-    justifyContent: "center",
-    flex: 1,
-  },
-  label: {
-    fontSize: 12,
-    marginTop: 4,
-    fontFamily: "Outfit_500Medium",
-  },
-});
+export function TabBar() {
+  const c = useJournalColors();
+  const height = useTabBarHeight();
+  const { fontScale } = useWindowDimensions();
+  const pathname = usePathname();
+  const insets = useSafeAreaInsets();
+  return <View style={[s.container, { height, bottom: Math.max(12, insets.bottom + 5), backgroundColor: c.surface, borderColor: c.border }]}>{tabs.map(tab => {
+    const selected = pathname === tab.path;
+    return <MotionPressable haptic="selection" key={`${tab.label}:${fontScale}`} accessibilityRole="tab" accessibilityLabel={tab.label} accessibilityState={{ selected }} onPress={() => { Keyboard.dismiss(); router.navigate(tab.route); }} style={({ pressed }) => [s.tab, pressed && { opacity: .6 }]}><MotionSelection selected={selected} style={[s.icon, { backgroundColor: selected ? c.accentSoft : 'transparent' }]}><Ionicons accessible={false} name={selected ? tab.icon : tab.outline} size={21} color={selected ? c.accent : c.muted} /></MotionSelection><Text maxFontSizeMultiplier={2} style={[s.label, { color: selected ? c.accent : c.muted }]}>{tab.label}</Text></MotionPressable>;
+  })}</View>;
+}
+const s = StyleSheet.create({ container: { position: 'absolute', left: 24, right: 24, minHeight: 82, paddingVertical: 8, borderRadius: 26, borderWidth: 1, flexDirection: 'row', alignItems: 'center', shadowColor: '#201637', shadowOpacity: .06, shadowOffset: { width: 0, height: 5 }, shadowRadius: 18, elevation: 6, maxWidth: 600, alignSelf: 'center' }, tab: { flex: 1, minHeight: 64, paddingVertical: 3, alignItems: 'center', justifyContent: 'center', gap: 3 }, icon: { width: 52, height: 32, borderRadius: 12, alignItems: 'center', justifyContent: 'center' }, label: { fontFamily: 'Outfit_500Medium', fontSize: 14 } });
