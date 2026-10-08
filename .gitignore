@@ -49,3 +49,7 @@ app-example
 .dev.vars*
 !.dev.vars.example
 .wrangler/
+
+*.ipa
+
+*.apk
