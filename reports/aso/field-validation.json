@@ -1,0 +1,170 @@
+[
+  {
+    "locale": "en-US",
+    "field": "name",
+    "characters": 26,
+    "utf8_bytes": 26,
+    "limit": 30
+  },
+  {
+    "locale": "en-US",
+    "field": "subtitle",
+    "characters": 26,
+    "utf8_bytes": 26,
+    "limit": 30
+  },
+  {
+    "locale": "en-US",
+    "field": "keywords",
+    "characters": 96,
+    "utf8_bytes": 96,
+    "limit": 100
+  },
+  {
+    "locale": "en-US",
+    "field": "promotional_text",
+    "characters": 134,
+    "utf8_bytes": 134,
+    "limit": 170
+  },
+  {
+    "locale": "en-US",
+    "field": "description",
+    "characters": 1847,
+    "utf8_bytes": 1847,
+    "limit": 4000
+  },
+  {
+    "locale": "en-US",
+    "field": "release_notes",
+    "characters": 310,
+    "utf8_bytes": 310,
+    "limit": 4000
+  },
+  {
+    "locale": "en-GB",
+    "field": "name",
+    "characters": 26,
+    "utf8_bytes": 26,
+    "limit": 30
+  },
+  {
+    "locale": "en-GB",
+    "field": "subtitle",
+    "characters": 26,
+    "utf8_bytes": 26,
+    "limit": 30
+  },
+  {
+    "locale": "en-GB",
+    "field": "keywords",
+    "characters": 96,
+    "utf8_bytes": 96,
+    "limit": 100
+  },
+  {
+    "locale": "en-GB",
+    "field": "promotional_text",
+    "characters": 134,
+    "utf8_bytes": 134,
+    "limit": 170
+  },
+  {
+    "locale": "en-GB",
+    "field": "description",
+    "characters": 1849,
+    "utf8_bytes": 1849,
+    "limit": 4000
+  },
+  {
+    "locale": "en-GB",
+    "field": "release_notes",
+    "characters": 311,
+    "utf8_bytes": 311,
+    "limit": 4000
+  },
+  {
+    "locale": "en-CA",
+    "field": "name",
+    "characters": 26,
+    "utf8_bytes": 26,
+    "limit": 30
+  },
+  {
+    "locale": "en-CA",
+    "field": "subtitle",
+    "characters": 26,
+    "utf8_bytes": 26,
+    "limit": 30
+  },
+  {
+    "locale": "en-CA",
+    "field": "keywords",
+    "characters": 96,
+    "utf8_bytes": 96,
+    "limit": 100
+  },
+  {
+    "locale": "en-CA",
+    "field": "promotional_text",
+    "characters": 134,
+    "utf8_bytes": 134,
+    "limit": 170
+  },
+  {
+    "locale": "en-CA",
+    "field": "description",
+    "characters": 1847,
+    "utf8_bytes": 1847,
+    "limit": 4000
+  },
+  {
+    "locale": "en-CA",
+    "field": "release_notes",
+    "characters": 310,
+    "utf8_bytes": 310,
+    "limit": 4000
+  },
+  {
+    "locale": "en-AU",
+    "field": "name",
+    "characters": 26,
+    "utf8_bytes": 26,
+    "limit": 30
+  },
+  {
+    "locale": "en-AU",
+    "field": "subtitle",
+    "characters": 26,
+    "utf8_bytes": 26,
+    "limit": 30
+  },
+  {
+    "locale": "en-AU",
+    "field": "keywords",
+    "characters": 96,
+    "utf8_bytes": 96,
+    "limit": 100
+  },
+  {
+    "locale": "en-AU",
+    "field": "promotional_text",
+    "characters": 134,
+    "utf8_bytes": 134,
+    "limit": 170
+  },
+  {
+    "locale": "en-AU",
+    "field": "description",
+    "characters": 1849,
+    "utf8_bytes": 1849,
+    "limit": 4000
+  },
+  {
+    "locale": "en-AU",
+    "field": "release_notes",
+    "characters": 311,
+    "utf8_bytes": 311,
+    "limit": 4000
+  }
+]

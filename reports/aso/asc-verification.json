@@ -1,0 +1,265 @@
+{
+  "verified_at_utc": "2026-10-08T22:27:27.677992+00:00",
+  "version": "1.0.4",
+  "version_id": "12256cd2-aea5-4e41-8aa4-0d2bfcf87bfa",
+  "app_info_id": "cd228394-3e72-4798-8ddc-5fb3697a13bf",
+  "state": "PREPARE_FOR_SUBMISSION",
+  "verified_localizations": [
+    {
+      "locale": "en-GB",
+      "type": "appInfoLocalizations",
+      "id": "5e80dd56-bb21-49ae-bac4-9f0ae49ff93c",
+      "verified_attributes": {
+        "locale": "en-GB",
+        "name": "Dream Journal: The Dreamer",
+        "subtitle": "Voice Diary & AI Summaries",
+        "privacyPolicyUrl": "https://thedreamer.app/privacy",
+        "privacyChoicesUrl": null,
+        "privacyPolicyText": null
+      }
+    },
+    {
+      "locale": "en-GB",
+      "type": "appStoreVersionLocalizations",
+      "id": "6ac4e52a-0807-4856-8d34-120abfd26c7c",
+      "verified_attributes": {
+        "description": "Remember your dreams before the details fade. The Dreamer is a dream journal for writing a few words, recording your voice, and returning to the moments you want to keep.\n\nCAPTURE IN YOUR OWN WAY\nWrite a quick note or record a voice entry while the dream is still fresh. Text and recordings save on your device first, so you can capture a dream without waiting for a connection.\n\nTURN VOICE INTO TEXT\nWhen you choose, turn a saved recording into a readable transcript. Your original audio stays available to replay.\n\nMAKE ENTRIES EASIER TO REVISIT\nRequest an AI summary, title, mood, and tags for an entry. Review and edit the result alongside your own words. Summaries help organise what you recorded.\n\nFIND THE DREAM YOU REMEMBER\nSearch your entries by words and themes, browse by date, and keep favourites close. Revisit familiar people, places, and feelings in your own journal.\n\nBUILD YOUR MORNING ROUTINE\nSet a journaling reminder that suits you. Start with a fragment, a feeling, or a few spoken words; each entry adds to the story you can return to.\n\nKEEP A COPY OF YOUR WORDS\nEdit your entries, share a dream when you want to, or export a readable copy of your journal. Optional email recovery helps you reconnect with your account.\n\nAI transcription and summaries use cloud processing when you request them. Premium subscriptions provide additional AI processing. Your saved journal remains available when a subscription ends.\n\nSubscriptions renew automatically unless cancelled at least 24 hours before the end of the current period. Payment is charged to your Apple Account at confirmation of purchase. Manage or cancel subscriptions in your App Store account settings.\n\nPrivacy policy: https://thedreamer.app/privacy\nSupport: https://thedreamer.app/support\nTerms of use: https://www.apple.com/legal/internet-services/itunes/dev/stdeula/",
+        "locale": "en-GB",
+        "keywords": "dream recorder,dream recall,audio journal,night notes,mood log,reflection,transcription,memories",
+        "marketingUrl": "https://thedreamer.app/",
+        "promotionalText": "Keep the dream before it fades. Write or record it, choose voice-to-text and AI summaries, then revisit your words, moods, and themes.",
+        "supportUrl": "https://thedreamer.app/support",
+        "whatsNew": "A fresh look for The Dreamer, with a journal built around your words and voice.\n\n- Save written dreams and recordings on your device first.\n- Choose when to turn a recording into text or add an AI summary.\n- Revisit entries with search, themes, dates, and favourites.\n- Keep a readable copy with journal export."
+      }
+    },
+    {
+      "locale": "en-US",
+      "type": "appInfoLocalizations",
+      "id": "a0a7bd8f-d251-4929-be78-6c45fe44785d",
+      "verified_attributes": {
+        "locale": "en-US",
+        "name": "Dream Journal: The Dreamer",
+        "subtitle": "Voice Diary & AI Summaries",
+        "privacyPolicyUrl": "https://thedreamer.app/privacy",
+        "privacyChoicesUrl": null,
+        "privacyPolicyText": null
+      }
+    },
+    {
+      "locale": "en-US",
+      "type": "appStoreVersionLocalizations",
+      "id": "30a2f993-814f-4dc3-a165-beced9353e3a",
+      "verified_attributes": {
+        "description": "Remember your dreams before the details fade. The Dreamer is a dream journal for writing a few words, recording your voice, and returning to the moments you want to keep.\n\nCAPTURE IN YOUR OWN WAY\nWrite a quick note or record a voice entry while the dream is still fresh. Text and recordings save on your device first, so you can capture a dream without waiting for a connection.\n\nTURN VOICE INTO TEXT\nWhen you choose, turn a saved recording into a readable transcript. Your original audio stays available to replay.\n\nMAKE ENTRIES EASIER TO REVISIT\nRequest an AI summary, title, mood, and tags for an entry. Review and edit the result alongside your own words. Summaries help organize what you recorded.\n\nFIND THE DREAM YOU REMEMBER\nSearch your entries by words and themes, browse by date, and keep favorites close. Revisit familiar people, places, and feelings in your own journal.\n\nBUILD YOUR MORNING ROUTINE\nSet a journaling reminder that suits you. Start with a fragment, a feeling, or a few spoken words; each entry adds to the story you can return to.\n\nKEEP A COPY OF YOUR WORDS\nEdit your entries, share a dream when you want to, or export a readable copy of your journal. Optional email recovery helps you reconnect with your account.\n\nAI transcription and summaries use cloud processing when you request them. Premium subscriptions provide additional AI processing. Your saved journal remains available when a subscription ends.\n\nSubscriptions renew automatically unless canceled at least 24 hours before the end of the current period. Payment is charged to your Apple Account at confirmation of purchase. Manage or cancel subscriptions in your App Store account settings.\n\nPrivacy policy: https://thedreamer.app/privacy\nSupport: https://thedreamer.app/support\nTerms of use: https://www.apple.com/legal/internet-services/itunes/dev/stdeula/",
+        "locale": "en-US",
+        "keywords": "dream recorder,dream recall,audio journal,night notes,mood log,reflection,transcription,memories",
+        "marketingUrl": "https://thedreamer.app/",
+        "promotionalText": "Keep the dream before it fades. Write or record it, choose voice-to-text and AI summaries, then revisit your words, moods, and themes.",
+        "supportUrl": "https://thedreamer.app/support",
+        "whatsNew": "A fresh look for The Dreamer, with a journal built around your words and voice.\n\n- Save written dreams and recordings on your device first.\n- Choose when to turn a recording into text or add an AI summary.\n- Revisit entries with search, themes, dates, and favorites.\n- Keep a readable copy with journal export."
+      }
+    },
+    {
+      "locale": "en-CA",
+      "type": "appInfoLocalizations",
+      "id": "32cab25c-0478-4c4c-b188-cfa5958bf522",
+      "verified_attributes": {
+        "locale": "en-CA",
+        "name": "Dream Journal: The Dreamer",
+        "subtitle": "Voice Diary & AI Summaries",
+        "privacyPolicyUrl": "https://thedreamer.app/privacy",
+        "privacyChoicesUrl": null,
+        "privacyPolicyText": null
+      }
+    },
+    {
+      "locale": "en-CA",
+      "type": "appStoreVersionLocalizations",
+      "id": "05911571-d904-4ed3-a073-0cf259e001ce",
+      "verified_attributes": {
+        "description": "Remember your dreams before the details fade. The Dreamer is a dream journal for writing a few words, recording your voice, and returning to the moments you want to keep.\n\nCAPTURE IN YOUR OWN WAY\nWrite a quick note or record a voice entry while the dream is still fresh. Text and recordings save on your device first, so you can capture a dream without waiting for a connection.\n\nTURN VOICE INTO TEXT\nWhen you choose, turn a saved recording into a readable transcript. Your original audio stays available to replay.\n\nMAKE ENTRIES EASIER TO REVISIT\nRequest an AI summary, title, mood, and tags for an entry. Review and edit the result alongside your own words. Summaries help organize what you recorded.\n\nFIND THE DREAM YOU REMEMBER\nSearch your entries by words and themes, browse by date, and keep favorites close. Revisit familiar people, places, and feelings in your own journal.\n\nBUILD YOUR MORNING ROUTINE\nSet a journaling reminder that suits you. Start with a fragment, a feeling, or a few spoken words; each entry adds to the story you can return to.\n\nKEEP A COPY OF YOUR WORDS\nEdit your entries, share a dream when you want to, or export a readable copy of your journal. Optional email recovery helps you reconnect with your account.\n\nAI transcription and summaries use cloud processing when you request them. Premium subscriptions provide additional AI processing. Your saved journal remains available when a subscription ends.\n\nSubscriptions renew automatically unless canceled at least 24 hours before the end of the current period. Payment is charged to your Apple Account at confirmation of purchase. Manage or cancel subscriptions in your App Store account settings.\n\nPrivacy policy: https://thedreamer.app/privacy\nSupport: https://thedreamer.app/support\nTerms of use: https://www.apple.com/legal/internet-services/itunes/dev/stdeula/",
+        "locale": "en-CA",
+        "keywords": "dream recorder,dream recall,audio journal,night notes,mood log,reflection,transcription,memories",
+        "marketingUrl": "https://thedreamer.app/",
+        "promotionalText": "Keep the dream before it fades. Write or record it, choose voice-to-text and AI summaries, then revisit your words, moods, and themes.",
+        "supportUrl": "https://thedreamer.app/support",
+        "whatsNew": "A fresh look for The Dreamer, with a journal built around your words and voice.\n\n- Save written dreams and recordings on your device first.\n- Choose when to turn a recording into text or add an AI summary.\n- Revisit entries with search, themes, dates, and favorites.\n- Keep a readable copy with journal export."
+      }
+    },
+    {
+      "locale": "en-AU",
+      "type": "appInfoLocalizations",
+      "id": "b8e3926b-b02e-43b4-88de-27ebfde72e84",
+      "verified_attributes": {
+        "locale": "en-AU",
+        "name": "Dream Journal: The Dreamer",
+        "subtitle": "Voice Diary & AI Summaries",
+        "privacyPolicyUrl": "https://thedreamer.app/privacy",
+        "privacyChoicesUrl": null,
+        "privacyPolicyText": null
+      }
+    },
+    {
+      "locale": "en-AU",
+      "type": "appStoreVersionLocalizations",
+      "id": "c0b56284-ac2f-43e1-8a81-64fe0ed27670",
+      "verified_attributes": {
+        "description": "Remember your dreams before the details fade. The Dreamer is a dream journal for writing a few words, recording your voice, and returning to the moments you want to keep.\n\nCAPTURE IN YOUR OWN WAY\nWrite a quick note or record a voice entry while the dream is still fresh. Text and recordings save on your device first, so you can capture a dream without waiting for a connection.\n\nTURN VOICE INTO TEXT\nWhen you choose, turn a saved recording into a readable transcript. Your original audio stays available to replay.\n\nMAKE ENTRIES EASIER TO REVISIT\nRequest an AI summary, title, mood, and tags for an entry. Review and edit the result alongside your own words. Summaries help organise what you recorded.\n\nFIND THE DREAM YOU REMEMBER\nSearch your entries by words and themes, browse by date, and keep favourites close. Revisit familiar people, places, and feelings in your own journal.\n\nBUILD YOUR MORNING ROUTINE\nSet a journaling reminder that suits you. Start with a fragment, a feeling, or a few spoken words; each entry adds to the story you can return to.\n\nKEEP A COPY OF YOUR WORDS\nEdit your entries, share a dream when you want to, or export a readable copy of your journal. Optional email recovery helps you reconnect with your account.\n\nAI transcription and summaries use cloud processing when you request them. Premium subscriptions provide additional AI processing. Your saved journal remains available when a subscription ends.\n\nSubscriptions renew automatically unless cancelled at least 24 hours before the end of the current period. Payment is charged to your Apple Account at confirmation of purchase. Manage or cancel subscriptions in your App Store account settings.\n\nPrivacy policy: https://thedreamer.app/privacy\nSupport: https://thedreamer.app/support\nTerms of use: https://www.apple.com/legal/internet-services/itunes/dev/stdeula/",
+        "locale": "en-AU",
+        "keywords": "dream recorder,dream recall,audio journal,night notes,mood log,reflection,transcription,memories",
+        "marketingUrl": "https://thedreamer.app/",
+        "promotionalText": "Keep the dream before it fades. Write or record it, choose voice-to-text and AI summaries, then revisit your words, moods, and themes.",
+        "supportUrl": "https://thedreamer.app/support",
+        "whatsNew": "A fresh look for The Dreamer, with a journal built around your words and voice.\n\n- Save written dreams and recordings on your device first.\n- Choose when to turn a recording into text or add an AI summary.\n- Revisit entries with search, themes, dates, and favourites.\n- Keep a readable copy with journal export."
+      }
+    }
+  ],
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/v1/appStoreVersions/12256cd2-aea5-4e41-8aa4-0d2bfcf87bfa",
+      "http": "HTTP 200"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/appInfos/cd228394-3e72-4798-8ddc-5fb3697a13bf",
+      "http": "HTTP 200"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/appStoreVersions/12256cd2-aea5-4e41-8aa4-0d2bfcf87bfa/appStoreVersionLocalizations?limit=200",
+      "http": "HTTP 200"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/appInfos/cd228394-3e72-4798-8ddc-5fb3697a13bf/appInfoLocalizations?limit=200",
+      "http": "HTTP 200"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/appInfos/cd228394-3e72-4798-8ddc-5fb3697a13bf/appInfoLocalizations?limit=200",
+      "http": "HTTP 200"
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/appInfoLocalizations/5e80dd56-bb21-49ae-bac4-9f0ae49ff93c",
+      "http": "HTTP 200"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/appInfoLocalizations/5e80dd56-bb21-49ae-bac4-9f0ae49ff93c",
+      "http": "HTTP 200"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/appStoreVersions/12256cd2-aea5-4e41-8aa4-0d2bfcf87bfa/appStoreVersionLocalizations?limit=200",
+      "http": "HTTP 200"
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/appStoreVersionLocalizations/6ac4e52a-0807-4856-8d34-120abfd26c7c",
+      "http": "HTTP 200"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/appStoreVersionLocalizations/6ac4e52a-0807-4856-8d34-120abfd26c7c",
+      "http": "HTTP 200"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/appInfos/cd228394-3e72-4798-8ddc-5fb3697a13bf/appInfoLocalizations?limit=200",
+      "http": "HTTP 200"
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/appInfoLocalizations/a0a7bd8f-d251-4929-be78-6c45fe44785d",
+      "http": "HTTP 200"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/appInfoLocalizations/a0a7bd8f-d251-4929-be78-6c45fe44785d",
+      "http": "HTTP 200"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/appStoreVersions/12256cd2-aea5-4e41-8aa4-0d2bfcf87bfa/appStoreVersionLocalizations?limit=200",
+      "http": "HTTP 200"
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/appStoreVersionLocalizations/30a2f993-814f-4dc3-a165-beced9353e3a",
+      "http": "HTTP 200"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/appStoreVersionLocalizations/30a2f993-814f-4dc3-a165-beced9353e3a",
+      "http": "HTTP 200"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/appInfos/cd228394-3e72-4798-8ddc-5fb3697a13bf/appInfoLocalizations?limit=200",
+      "http": "HTTP 200"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/appInfoLocalizations",
+      "http": "HTTP 201"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/appInfoLocalizations/32cab25c-0478-4c4c-b188-cfa5958bf522",
+      "http": "HTTP 200"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/appStoreVersions/12256cd2-aea5-4e41-8aa4-0d2bfcf87bfa/appStoreVersionLocalizations?limit=200",
+      "http": "HTTP 200"
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/appStoreVersionLocalizations/05911571-d904-4ed3-a073-0cf259e001ce",
+      "http": "HTTP 200"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/appStoreVersionLocalizations/05911571-d904-4ed3-a073-0cf259e001ce",
+      "http": "HTTP 200"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/appInfos/cd228394-3e72-4798-8ddc-5fb3697a13bf/appInfoLocalizations?limit=200",
+      "http": "HTTP 200"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/appInfoLocalizations",
+      "http": "HTTP 201"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/appInfoLocalizations/b8e3926b-b02e-43b4-88de-27ebfde72e84",
+      "http": "HTTP 200"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/appStoreVersions/12256cd2-aea5-4e41-8aa4-0d2bfcf87bfa/appStoreVersionLocalizations?limit=200",
+      "http": "HTTP 200"
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/appStoreVersionLocalizations/c0b56284-ac2f-43e1-8a81-64fe0ed27670",
+      "http": "HTTP 200"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/appStoreVersionLocalizations/c0b56284-ac2f-43e1-8a81-64fe0ed27670",
+      "http": "HTTP 200"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/appStoreVersions/12256cd2-aea5-4e41-8aa4-0d2bfcf87bfa",
+      "http": "HTTP 200"
+    }
+  ],
+  "scope": "Draft text metadata only; no screenshot, pricing, binary or submission mutations."
+}

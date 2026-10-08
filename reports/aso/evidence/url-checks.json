@@ -1,0 +1,22 @@
+[
+  {
+    "url": "https://thedreamer.app/",
+    "status": 200,
+    "final_url": "https://thedreamer.app/"
+  },
+  {
+    "url": "https://thedreamer.app/privacy",
+    "status": 200,
+    "final_url": "https://thedreamer.app/privacy"
+  },
+  {
+    "url": "https://thedreamer.app/support",
+    "status": 200,
+    "final_url": "https://thedreamer.app/support"
+  },
+  {
+    "url": "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/",
+    "status": 200,
+    "final_url": "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/"
+  }
+]
