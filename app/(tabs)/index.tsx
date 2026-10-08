@@ -1,5 +1,4 @@
 import { MotionPressable, MotionReveal, MotionAmbient } from '@/components/motion/Motion';
-import { useMemo } from 'react';
 import { Image, ScrollView, StyleSheet, Text, View, RefreshControl, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -14,8 +13,8 @@ export default function HomeScreen() {
   const c = useJournalColors();
   const { fontScale } = useWindowDimensions();
   const { entries, hydrated, syncing, error, refresh, bottomSpace } = useDreamJournal();
-  const recent = useMemo(() => filterDreams(entries, {}).slice(0, 2), [entries]);
-  const themes = useMemo(() => journalThemes(entries).slice(0, 4), [entries]);
+  const recent = filterDreams(entries, {}).slice(0, 2);
+  const themes = journalThemes(entries).slice(0, 4);
   return <SafeAreaView edges={['top', 'left', 'right']} style={{ flex: 1, backgroundColor: c.background }}><ScrollView key={fontScale} showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={syncing} onRefresh={refresh} tintColor={c.accent} />} contentContainerStyle={[pageStyles.content, { paddingBottom: bottomSpace }]}>
     <MotionReveal style={s.brandRow}><View style={s.wordmark}><Ionicons accessible={false} name="moon" size={19} color={c.accent} /><Text maxFontSizeMultiplier={2} style={[s.brand, { color: c.ink }]}>the dreamer</Text></View><MotionPressable accessibilityRole="button" accessibilityLabel="Open settings" onPress={() => router.push('/preferences')} style={({ pressed }) => [s.settings, { backgroundColor: c.elevated }, pressed && { opacity: .65 }]}><Ionicons accessible={false} name="settings-outline" size={21} color={c.accent} /><Text style={[s.settingsLabel, { color: c.accent }]}>Settings</Text></MotionPressable></MotionReveal>
     <MotionReveal delay={40}><Text style={[s.date, { color: c.muted }]}>{new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}</Text>
