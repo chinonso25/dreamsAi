@@ -1,0 +1,6 @@
+A fresh look for The Dreamer, with a journal built around your words and voice.
+
+- Save written dreams and recordings on your device first.
+- Choose when to turn a recording into text or add an AI summary.
+- Revisit entries with search, themes, dates, and favourites.
+- Keep a readable copy with journal export.
