@@ -1,0 +1,18 @@
+{
+  "client_date": "2026-10-08",
+  "skill": "https://github.com/Kronop/vibe-aso",
+  "skill_commit": "fdc1b0bbd4712509aa623d98c51953aa016a34a7",
+  "app_id": "6740153274",
+  "keyword_source": "none",
+  "markets": [
+    "us",
+    "gb",
+    "ca",
+    "au"
+  ],
+  "limitations": [
+    "Apple Search API result order is not App Store device ranking.",
+    "No measured search volume or keyword difficulty.",
+    "Source features are not proof of the live 1.0.3 binary."
+  ]
+}
