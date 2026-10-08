@@ -1,10 +1,10 @@
-import React, { useEffect, useRef } from "react";
-import { Animated } from "react-native";
-import styled from "styled-components/native";
+import React, { useEffect, useState } from "react";
+import { Animated, StyleSheet, View } from "react-native";
 
 interface Props {
   isRecording: boolean;
   meterLevel: number;
+  theme: string;
 }
 
 const NUM_BARS = 50;
@@ -13,10 +13,10 @@ const BAR_GAP = 2;
 const MAX_BAR_HEIGHT = 100;
 const MIN_BAR_HEIGHT = 3;
 
-const HelloWave: React.FC<Props> = ({ isRecording, meterLevel }) => {
-  const barHeights = useRef(
+const HelloWave: React.FC<Props> = ({ isRecording, meterLevel, theme }) => {
+  const [barHeights] = useState(() =>
     Array.from({ length: NUM_BARS }, () => new Animated.Value(MIN_BAR_HEIGHT))
-  ).current;
+  );
 
   useEffect(() => {
     if (isRecording) {
@@ -54,35 +54,26 @@ const HelloWave: React.FC<Props> = ({ isRecording, meterLevel }) => {
       );
       Animated.parallel(animations).start();
     }
-  }, [isRecording, meterLevel]);
+  }, [isRecording, meterLevel, barHeights]);
 
   return (
-    <Container>
+    <View style={styles.container}>
       {barHeights.map((height, index) => (
-        <Bar
+        <Animated.View
           key={index}
-          style={{
+          style={[styles.bar, {
             height,
-            backgroundColor: "#000",
-            width: BAR_WIDTH,
-            marginHorizontal: BAR_GAP / 2,
-          }}
+            backgroundColor: theme === "dark" ? "white" : "black",
+          }]}
         />
       ))}
-    </Container>
+    </View>
   );
 };
 
-const Container = styled.View({
-  flexDirection: "row",
-  alignItems: "center",
-  justifyContent: "center",
-  height: MAX_BAR_HEIGHT,
-  overflow: "hidden",
-});
-
-const Bar = styled(Animated.View)({
-  borderRadius: BAR_WIDTH / 2,
+const styles = StyleSheet.create({
+  container: { flexDirection: "row", alignItems: "center", justifyContent: "center", height: MAX_BAR_HEIGHT, overflow: "hidden" },
+  bar: { borderRadius: BAR_WIDTH / 2, width: BAR_WIDTH, marginHorizontal: BAR_GAP / 2 },
 });
 
 export default HelloWave;

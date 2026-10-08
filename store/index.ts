@@ -1,12 +1,2 @@
-// store/recordingStore.ts
-import { create } from "zustand";
-
-interface RecordingStore {
-  currentRecordingUri: string | null;
-  setRecordingUri: (uri: string) => void;
-}
-
-export const useRecordingStore = create<RecordingStore>((set) => ({
-  currentRecordingUri: null,
-  setRecordingUri: (uri) => set({ currentRecordingUri: uri }),
-}));
+// Recording ownership lives in the durable capture draft, never in a global URI.
+export { useCaptureDraft, hydrateDraft, updateDraft } from '@/util/drafts';

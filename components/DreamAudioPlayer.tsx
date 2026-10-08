@@ -1,140 +1,31 @@
-import { FontAwesome6 } from "@expo/vector-icons";
-import styled from "styled-components/native";
-import { ThemedText } from "./ThemedText";
-import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
-import { millisecondsToMMSS } from "@/util";
-import { useEffect } from "react";
+import { MotionPressable, MotionProgress, MotionReveal } from '@/components/motion/Motion';
+import { useState } from 'react';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { playRecording, pauseRecordingPlayback, seekRecording, setRecordingSpeed, useRecordingPlayback, type RecordingTrack } from '@/util/audio-playback';
+import { secondsToMMSS } from '@/util';
+import { useJournalColors } from './journal/theme';
 
-type Props = {
-  audio_url: string;
-};
-
-const url =
-  "https://clhdhfxpgdyhytgpyvvk.supabase.co/storage/v1/object/sign/dreams/81d8f772-694c-400a-91b5-ad525417af07/recording-D0C6EE5A-02B5-4A2E-B73B-F4460BD873BE.m4a?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1cmwiOiJkcmVhbXMvODFkOGY3NzItNjk0Yy00MDBhLTkxYjUtYWQ1MjU0MTdhZjA3L3JlY29yZGluZy1EMEM2RUU1QS0wMkI1LTRBMkUtQjczQi1GNDQ2MEJEODczQkUubTRhIiwiaWF0IjoxNzM1MDk3MzYwLCJleHAiOjE3MzU3MDIxNjB9.-8Zz60kailT9dIy3cPOioGvDRvSBpXlfW7hB5jz37f8&t=2024-12-25T03%3A29%3A20.595Z";
-
-export default function DreamAudioPlayer({ audio_url }: Props) {
-  const player = useAudioPlayer(url);
-
-  const playerStatus = useAudioPlayerStatus(player);
-
-  const handlePlay = () => {
-    if (playerStatus.isLoaded && !playerStatus.playing) {
-      player.play();
-    } else if (playerStatus.isLoaded && playerStatus.playing) {
-      player.pause();
-    }
-  };
-
-  const finishedPlaying = playerStatus.currentTime === playerStatus.duration;
-
-  useEffect(() => {
-    if (finishedPlaying) {
-      player.seekTo(0);
-      player.pause();
-    }
-  }, [finishedPlaying]);
-
-  return (
-    <AudioPlayerBar>
-      <PlayerContainer>
-        <PlayButton onPress={handlePlay}>
-          <FontAwesome6
-            name={playerStatus.playing ? "pause" : "play"}
-            size={24}
-            color="white"
-          />
-        </PlayButton>
-
-        <ThemedText
-          style={{ color: "white", fontSize: 12, marginLeft: 8, width: 45 }}
-        >
-          {millisecondsToMMSS(playerStatus?.currentTime || 0)}
-        </ThemedText>
-
-        <SeekerContainer>
-          <SeekerBackground />
-          <SeekerProgress
-            style={{
-              width: `${
-                ((playerStatus?.currentTime || 0) /
-                  (playerStatus?.duration || 1)) *
-                100
-              }%`,
-            }}
-          />
-          <SeekerKnob
-            style={{
-              left: `${
-                ((playerStatus?.currentTime || 0) /
-                  (playerStatus?.duration || 1)) *
-                100
-              }%`,
-            }}
-          />
-        </SeekerContainer>
-
-        <ThemedText
-          style={{ color: "white", fontSize: 12, marginLeft: 8, width: 45 }}
-        >
-          {millisecondsToMMSS(playerStatus?.duration || 0)}
-        </ThemedText>
-      </PlayerContainer>
-    </AudioPlayerBar>
-  );
+export default function DreamAudioPlayer({ audio_url, id, ownerId, title = 'Recording', draft = false, duration = 0 }: { audio_url: string; id: string; ownerId: string; title?: string; draft?: boolean; duration?: number }) {
+  const colors = useJournalColors();
+  const playback = useRecordingPlayback();
+  const selected = playback.track?.id === id && playback.track.ownerId === ownerId && playback.track.uri === audio_url && Boolean(playback.track.draft) === draft;
+  const status = selected && playback.status ? playback.status : { playing: false, currentTime: 0, duration, isLoaded: false };
+  const rate = selected ? playback.rate : 1;
+  const loading = selected && playback.loading;
+  const [width, setWidth] = useState(1);
+  const [error, setError] = useState('');
+  const track: RecordingTrack = { id, ownerId, uri: audio_url, title, draft };
+  const seek = async (time: number) => { try { if (selected) await seekRecording(time); setError(''); } catch { setError('Could not move playback. Try again.'); } };
+  const play = async () => { try { if (selected && (status.playing || playback.loading)) pauseRecordingPlayback(); else await playRecording(track, Boolean(playback.error)); setError(''); } catch { setError('Could not play this recording. Try again.'); } };
+  const retry = () => { void playRecording(track, true).then(() => setError(''), () => setError('Could not open the recording. Try again.')); };
+  const playbackError = error || (selected ? playback.error : undefined);
+  const progress = Math.min(1, Math.max(0, status.currentTime / (status.duration || 1)));
+  return <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+      <View style={styles.row}><MotionPressable accessibilityRole="button" accessibilityLabel={loading ? 'Cancel opening recording' : status.playing ? 'Pause recording' : 'Play recording'} onPress={() => { void play(); }} style={[styles.play, { backgroundColor: colors.accent }]}>{loading ? <ActivityIndicator color={colors.background} /> : <MotionReveal key={status.playing ? 'pause' : 'play'} subtle><Ionicons accessible={false} name={status.playing ? 'pause' : 'play'} size={22} color={colors.background} /></MotionReveal>}<Text maxFontSizeMultiplier={2} style={[styles.label, { color: colors.background }]}>{loading ? 'Wait' : status.playing ? 'Pause' : 'Play'}</Text></MotionPressable><View style={styles.trackColumn}><MotionPressable haptic="selection" pressScale={1} accessibilityRole="adjustable" accessibilityLabel="Recording playback position" disabled={!selected || !status.isLoaded} accessibilityValue={{ min: 0, max: Math.round(status.duration), now: Math.round(status.currentTime), text: `${secondsToMMSS(status.currentTime)} of ${secondsToMMSS(status.duration)}` }} accessibilityActions={[{ name: 'increment', label: 'Forward ten seconds' }, { name: 'decrement', label: 'Back ten seconds' }]} onAccessibilityAction={event => { void seek(status.currentTime + (event.nativeEvent.actionName === 'increment' ? 10 : -10)); }} onLayout={event => setWidth(event.nativeEvent.layout.width)} onPress={event => { void seek((event.nativeEvent.locationX / width) * status.duration); }} style={styles.seekTouch}><View style={[styles.track, { backgroundColor: colors.elevated }]}><MotionProgress value={progress} style={[styles.progress, { backgroundColor: colors.accent }]} /></View></MotionPressable><View style={styles.times}><Text style={[styles.time, { color: colors.muted }]}>{secondsToMMSS(status.currentTime)}</Text><Text style={[styles.time, { color: colors.muted }]}>{secondsToMMSS(status.duration)}</Text></View></View></View>
+      <View style={styles.controls}><MotionPressable accessibilityRole="button" haptic="selection" accessibilityLabel="Back ten seconds" disabled={!selected || !status.isLoaded} onPress={() => { void seek(status.currentTime - 10); }} style={styles.smallButton}><Ionicons accessible={false} name="play-back-outline" size={15} color={colors.muted} /><Text style={[styles.label, { color: colors.muted }]}>10s</Text></MotionPressable><MotionPressable accessibilityRole="button" haptic="selection" accessibilityLabel={`Playback speed ${rate} times. Change speed`} disabled={!selected || !status.isLoaded} onPress={() => { const next = rate === 1 ? 0.75 : rate === 0.75 ? 0.5 : rate === 0.5 ? 1.25 : rate === 1.25 ? 1.5 : 1; try { if (selected) setRecordingSpeed(next); } catch { setError('Could not change playback speed.'); } }} style={styles.smallButton}><Text style={[styles.label, { color: colors.accent }]}>{rate}× speed</Text></MotionPressable><MotionPressable accessibilityRole="button" haptic="selection" accessibilityLabel="Forward ten seconds" disabled={!selected || !status.isLoaded} onPress={() => { void seek(status.currentTime + 10); }} style={styles.smallButton}><Text style={[styles.label, { color: colors.muted }]}>10s</Text><Ionicons accessible={false} name="play-forward-outline" size={15} color={colors.muted} /></MotionPressable></View>
+    <Text style={[styles.note, { color: colors.muted, marginTop: 8 }]}>{loading ? 'Opening recording…' : status.playing ? 'Playing your recording' : 'Tap Play to listen to your recording.'}</Text>
+    {playbackError && <View style={styles.error}><Text style={[styles.note, { color: colors.danger }]}>{playbackError}</Text><MotionPressable accessibilityRole="button" onPress={retry} style={styles.smallButton}><Text style={[styles.label, { color: colors.accent }]}>Retry recording</Text></MotionPressable></View>}
+  </View>;
 }
-
-const AudioPlayerBar = styled.View({
-  backgroundColor: "#000",
-  paddingHorizontal: 16,
-  paddingVertical: 12,
-  width: "100%",
-  marginTop: 8,
-  borderRadius: 8,
-});
-
-const PlayerContainer = styled.View({
-  flexDirection: "row",
-  alignItems: "center",
-  width: "100%",
-});
-
-const PlayButton = styled.TouchableOpacity({
-  width: 36,
-  height: 36,
-  borderRadius: 18,
-  backgroundColor: "#333",
-  justifyContent: "center",
-  alignItems: "center",
-});
-
-const SeekerContainer = styled.View({
-  flex: 1,
-  height: 20,
-  marginHorizontal: 8,
-  justifyContent: "center",
-});
-
-const SeekerBackground = styled.View({
-  position: "absolute",
-  width: "100%",
-  height: 4,
-  backgroundColor: "#444",
-  borderRadius: 2,
-});
-
-const SeekerProgress = styled.View({
-  position: "absolute",
-  height: 4,
-  backgroundColor: "#fff",
-  borderRadius: 2,
-});
-
-const SeekerKnob = styled.View({
-  position: "absolute",
-  width: 12,
-  height: 12,
-  backgroundColor: "#fff",
-  borderRadius: 6,
-  marginLeft: -6,
-  top: 4,
-});
+const styles = StyleSheet.create({ card: { padding: 18, borderWidth: 1, borderRadius: 22 }, row: { flexDirection: 'row', alignItems: 'center', gap: 15 }, play: { minWidth: 72, minHeight: 72, padding: 10, gap: 5, borderRadius: 17, alignItems: 'center', justifyContent: 'center' }, trackColumn: { flex: 1 }, seekTouch: { minHeight: 44, justifyContent: 'center' }, track: { height: 5, borderRadius: 5, overflow: 'hidden' }, progress: { height: 5, borderRadius: 5 }, times: { flexDirection: 'row', justifyContent: 'space-between' }, time: { fontFamily: 'Outfit_400Regular', fontSize: 14 }, controls: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', marginTop: 14 }, smallButton: { minHeight: 44, paddingHorizontal: 7, flexDirection: 'row', gap: 5, alignItems: 'center', justifyContent: 'center' }, label: { fontFamily: 'Outfit_500Medium', fontSize: 16 }, loading: { minHeight: 65, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, flexWrap: 'wrap' }, note: { fontFamily: 'Outfit_400Regular', fontSize: 16, lineHeight: 24 }, error: { marginTop: 10 } });

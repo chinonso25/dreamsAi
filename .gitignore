@@ -40,3 +40,12 @@ yarn-error.*
 
 app-example
 .env
+
+.env.local
+
+.env.local
+
+# Cloudflare local secrets and runtime
+.dev.vars*
+!.dev.vars.example
+.wrangler/

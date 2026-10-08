@@ -1,44 +1,13 @@
+export enum MoodEnum { Happy = 'happy', Anxious = 'anxious', Neutral = 'neutral', Excited = 'excited', Sad = 'sad', Curious = 'curious', Frustrated = 'frustrated' }
+export enum PrivacyEnum { Public = 'public', Private = 'private', FriendsOnly = 'friends_only' }
+export type SyncStatus = 'local' | 'syncing' | 'synced' | 'error';
+export type ProcessingStatus = 'idle' | 'pending' | 'processing' | 'complete' | 'error';
 export interface Journal {
-  id: number;
-  user_id: number;
-  title?: string;
-  transcript: string;
-  audio_url?: string;
-  created_at: string; // ISO string
-  updated_at?: string; // ISO string
-  tags?: string[]; // Array of tag names
-  mood?: MoodEnum;
-  location?: string;
-  privacy?: PrivacyEnum;
-  images?: string[]; // Array of image URLs
-  summary?: string;
-  keywords?: string[]; // Array of keyword strings
-  audio_length?: number; // Duration in seconds
-  is_starred?: boolean;
-  deleted_at?: string | null; // ISO string or null for soft deletion
+  id: string; user_id: string; title?: string; transcript: string; original_text?: string;
+  dream_date: string; created_at: string; updated_at?: string;
+  summary?: string; tags?: string[]; keywords?: string[]; mood?: MoodEnum;
+  audio_key?: string; audio_url?: string; audio_length?: number; local_audio_uri?: string;
+  is_starred?: boolean; sync_status: SyncStatus; processing_status: ProcessingStatus; last_error?: string;
+  location?: string; privacy?: PrivacyEnum; images?: string[]; deleted_at?: string | null;
 }
-
-export interface JournalResponse {
-  title: string; // Title of the dream
-  transcript: string; // Formatted punctuated transcription of what was said
-  tags: string[]; // Related tags in the dream
-  mood: MoodEnum; // Mood of the dream
-  summary: string; // Summary of the dream
-  keywords: string[]; // Keywords related to the dream
-}
-
-export enum MoodEnum {
-  Happy = "happy",
-  Anxious = "anxious",
-  Neutral = "neutral",
-  Excited = "excited",
-  Sad = "sad",
-  Curious = "curious",
-  Frustrated = "frustrated",
-}
-
-export enum PrivacyEnum {
-  Public = "public",
-  Private = "private",
-  FriendsOnly = "friends_only",
-}
+export interface JournalResponse { title: string; transcript: string; tags: string[]; mood: MoodEnum; summary: string; keywords: string[] }

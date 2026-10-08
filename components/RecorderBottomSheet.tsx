@@ -1,188 +1,208 @@
-import { BottomSheetModal, BottomSheetView } from "@gorhom/bottom-sheet";
-import { forwardRef, useEffect } from "react";
-import { ThemedText } from "./ThemedText";
-import { ThemedView } from "./ThemedView";
-import FontAwesome6 from "@expo/vector-icons/FontAwesome6";
-import { Alert, View } from "react-native";
-import Entypo from "@expo/vector-icons/Entypo";
-import styled from "styled-components/native";
-import { useRouter } from "expo-router";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRecordingStore } from "@/store";
-import { FullWindowOverlay } from "react-native-screens";
-import HelloWave from "./HelloWave";
-import type { ReactNode } from "react";
-import { millisecondsToMMSS } from "@/util";
-import {
-  AudioModule,
-  RecordingPresets,
-  useAudioRecorder,
-  useAudioRecorderState,
-} from "expo-audio";
-import { BottomSheetModalRef } from "@gorhom/bottom-sheet/lib/typescript/components/bottomSheetModalProvider/types";
+import { haptic } from '@/util/haptics';
+import { ReduceMotion } from 'react-native-reanimated';
+import { MotionPressable, MotionAmbient, MotionReveal, useMotionPreference } from '@/components/motion/Motion';
+import { BottomSheetModal, BottomSheetView, BottomSheetScrollView } from '@gorhom/bottom-sheet';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { Alert, AppState, Platform, StyleSheet, Text, View, useColorScheme, useWindowDimensions } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { FullWindowOverlay } from 'react-native-screens';
+import { AudioModule, RecordingPresets, useAudioRecorder, useAudioRecorderState, type RecordingStatus } from 'expo-audio';
+import { beginRecordingAudio, endRecordingAudio } from '@/util/audio-playback';
+import { Feather } from '@expo/vector-icons';
+import { discardDraftRecording, hydrateDraft, retainRecording, updateDraft, useCaptureDraft } from '@/util/drafts';
 
-const ContainerComponent = ({ children }: { children?: ReactNode }) => (
-  <FullWindowOverlay>{children}</FullWindowOverlay>
-);
-
-const RecorderBottomSheet = forwardRef<BottomSheetModalRef>((_, ref) => {
+const MAX_SECONDS = 600;
+type Props = { onRecordingSaved?: () => void };
+const Overlay = ({ children }: { children?: React.ReactNode }) => <FullWindowOverlay>{children}</FullWindowOverlay>;
+const RecorderBottomSheet = forwardRef<BottomSheetModal, Props>(({ onRecordingSaved }, ref) => {
+  const sheet = useRef<BottomSheetModal>(null);
+  useImperativeHandle(ref, () => sheet.current!);
+  const nativeEventHandler = useRef<(event: RecordingStatus) => void>(() => undefined);
+  const recording = useAudioRecorder(RecordingPresets.HIGH_QUALITY, event => nativeEventHandler.current(event));
+  const status = useAudioRecorderState(recording, 250);
+  const { draft } = useCaptureDraft();
+  const prepared = useRef(false);
+  const busy = useRef(false);
+  const recordingDraftId = useRef<string | null>(null);
+  const interruptionRequested = useRef(false);
+  const duration = useRef(0);
+  const [state, setState] = useState<'idle' | 'recording' | 'paused' | 'saving'>('idle');
+  const [error, setError] = useState<string | null>(null);
+  const mounted = useRef(true);
   const { bottom } = useSafeAreaInsets();
-  const { push, dismissAll } = useRouter();
-  const { setRecordingUri } = useRecordingStore();
+  const dark = useColorScheme() === 'dark';
+  const reduced = useMotionPreference();
+  const { fontScale } = useWindowDimensions();
+  const ink = dark ? '#F8F4FF' : '#302A45';
+  const surface = dark ? '#211D32' : '#FAF7FF';
+  useEffect(() => { duration.current = status.durationMillis; }, [status.durationMillis]);
 
-  const recording = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const recordingStatus = useAudioRecorderState(recording);
-
-  const dreamify = () => {
-    setRecordingUri(recording.uri);
-    ref.current?.close();
-
-    dismissAll();
-    push("/summary");
-  };
-
+  const finish = useCallback(async (interrupted = false, close = true) => {
+    if (busy.current) { if (interrupted) interruptionRequested.current = true; return; }
+    if (!prepared.current || !recordingDraftId.current) return;
+    interruptionRequested.current = false;
+    busy.current = true;
+    if (mounted.current) { setState('saving'); setError(null); }
+    const id = recordingDraftId.current;
+    let elapsed = duration.current / 1000;
+    try {
+      try { elapsed = Math.max(duration.current, recording.getStatus().durationMillis) / 1000; } catch { /* Use the last known duration if native media services reset. */ }
+      await recording.stop();
+      prepared.current = false;
+      if (!recording.uri) throw new Error('The recording has no audio file. Your written draft is safe.');
+      await retainRecording(id, recording.uri, elapsed, interrupted);
+      if (mounted.current) {
+        setState('idle');
+        if (!interrupted && close) haptic('success');
+        if (close) sheet.current?.dismiss();
+        onRecordingSaved?.();
+      }
+    } catch (failure) {
+      if (prepared.current) { try { recording.pause(); } catch { /* Keep the last captured file even if media services reset. */ } }
+      // Keep the temporary URI so copying can be retried without recording again.
+      const uri = recording.uri;
+      if (uri) {
+        try { await updateDraft({ temporaryAudioUri: uri, audioLength: elapsed, recordingState: 'interrupted' }, id); } catch { /* original error is shown below */ }
+      }
+      if (mounted.current) { if (!interrupted && close) haptic('error'); setState(prepared.current ? 'paused' : 'idle'); setError(failure instanceof Error ? failure.message : 'We could not keep the recording. Retry before leaving.'); }
+    } finally {
+      if (!prepared.current || !mounted.current) await endRecordingAudio().catch(() => undefined);
+      busy.current = false;
+    }
+  }, [onRecordingSaved, recording]);
   useEffect(() => {
-    (async () => {
-      const status = await AudioModule.requestRecordingPermissionsAsync();
-      if (!status.granted) {
-        Alert.alert("Permission to access microphone was denied");
-      }
-    })();
+    nativeEventHandler.current = async event => {
+      if ((!event.hasError && !event.mediaServicesDidReset && !event.isFinished) || busy.current || !prepared.current || !recordingDraftId.current) return;
+      busy.current = true;
+      prepared.current = false;
+      const id = recordingDraftId.current;
+      try {
+        const uri = event.url || recording.uri;
+        if (!uri) throw new Error('The recording was interrupted before an audio file was available. Your written draft is safe; you can start again.');
+        await retainRecording(id, uri, duration.current / 1000, true);
+        if (mounted.current) { setState('idle'); setError(event.hasError ? 'Recording was interrupted. The audio captured so far has been kept.' : null); }
+      } catch (failure) {
+        try { await updateDraft({ recordingState: 'interrupted', temporaryAudioUri: event.url || recording.uri || undefined, audioLength: duration.current / 1000 }, id); } catch { /* Keep the original interruption error. */ }
+        if (mounted.current) { setState('idle'); setError(failure instanceof Error ? failure.message : 'Recording was interrupted. Retry recovery or start again.'); }
+      } finally { await endRecordingAudio().catch(() => undefined); busy.current = false; }
+    };
+  }, [recording]);
+  const finishRef = useRef(finish);
+  useEffect(() => { finishRef.current = finish; }, [finish]);
+  useEffect(() => {
+    mounted.current = true;
+    const listener = AppState.addEventListener('change', next => {
+      if (next !== 'active' && prepared.current) void finishRef.current(true, false);
+    });
+    return () => {
+      mounted.current = false;
+      listener.remove();
+      if (prepared.current) void finishRef.current(true, false);
+    };
   }, []);
+  useEffect(() => {
+    if (status.durationMillis >= MAX_SECONDS * 1000 && prepared.current && !busy.current) {
+      void finish(true, false);
+    }
+  }, [status.durationMillis, finish]);
 
-  const startRecording = async () => {
+  async function start() {
+    if (busy.current) return;
+    busy.current = true;
+    setError(null);
     try {
-      recording.record();
-    } catch (error) {
-      console.error("Failed to start recording", error);
-    }
-  };
-
-  const pauseRecording = async () => {
-    if (recordingStatus.isRecording) {
-      recording.pause();
-    }
-  };
-
-  const handleRecording = async () => {
-    if (recordingStatus.isRecording) {
-      recording.stop();
-
-      dreamify();
-    } else {
-      startRecording();
-    }
-  };
-
-  const closeBottomSheet = async (): Promise<void> => {
-    try {
-      if (recordingStatus.isRecording) {
-        recording.stop();
+      await hydrateDraft();
+      const current = useCaptureDraft.getState().draft!;
+      if (current.audioUri || current.temporaryAudioUri) {
+        setError('This draft already has a recording. Keep it, or explicitly discard it before starting again.');
+        return;
       }
+      const permission = await AudioModule.requestRecordingPermissionsAsync();
+      if (!permission.granted) throw new Error('Microphone access is off. Allow it in your device settings, or write your dream instead.');
+      await beginRecordingAudio();
+      await recording.prepareToRecordAsync();
+      recordingDraftId.current = current.id;
+      prepared.current = true;
+      // Persist ownership before starting, so interruption can never attach this file to another entry.
+      await updateDraft({ recordingState: 'recording', temporaryAudioUri: recording.uri ?? undefined, audioLength: 0 }, current.id);
+      recording.record({ forDuration: MAX_SECONDS });
+      setState('recording');
+      haptic('light');
+    } catch (failure) {
+      haptic('error');
+      setError(failure instanceof Error ? failure.message : 'Recording could not start. Please try again.');
+      if (prepared.current) {
+        await recording.stop().catch(() => undefined);
+        prepared.current = false;
+      }
+      await endRecordingAudio().catch(() => undefined);
+    } finally { busy.current = false; if (interruptionRequested.current && prepared.current) void finishRef.current(true, false); }
+  }
+  async function togglePause() {
+    if (busy.current || !prepared.current) return;
+    busy.current = true;
+    try {
+      if (state === 'recording') { recording.pause(); setState('paused'); await updateDraft({ recordingState: 'paused' }, recordingDraftId.current!); }
+      else { recording.record({ forDuration: Math.max(1, MAX_SECONDS - duration.current / 1000) }); setState('recording'); await updateDraft({ recordingState: 'recording' }, recordingDraftId.current!); }
+          haptic('selection');
+    } catch { haptic('error'); setError('We could not change recording state. Finish to keep the audio captured so far.'); }
+    finally { busy.current = false; if (interruptionRequested.current && prepared.current) void finishRef.current(true, false); }
+  }
+  async function retryRetention() {
+    if (!draft?.temporaryAudioUri || busy.current) return;
+    busy.current = true;
+    setState('saving');
+    try {
+      await retainRecording(draft.id, draft.temporaryAudioUri, draft.audioLength ?? 0, true);
+      haptic('success');
+      setError(null);
+      sheet.current?.dismiss();
+      onRecordingSaved?.();
+    } catch (failure) { haptic('error'); setError(failure instanceof Error ? failure.message : 'The recording could not be recovered.'); }
+    finally { busy.current = false; setState('idle'); }
+  }
+  function discard() {
+    Alert.alert('Discard this recording?', 'Your written dream will stay. This audio will be removed from the draft.', [
+      { text: 'Use recording', style: 'cancel' },
+      { text: 'Discard audio', style: 'destructive', onPress: async () => {
+        if (busy.current) return;
+        if (prepared.current) await finish(false, false);
+        if (prepared.current) return;
+        const current = useCaptureDraft.getState().draft;
+        if (current) await discardDraftRecording(current.id).catch(() => setError('Could not discard the audio. Please retry.'));
+        setState('idle');
+      } },
+    ]);
+  }
+  const hasRecording = Boolean(draft?.audioUri || draft?.temporaryAudioUri);
+  const active = state === 'recording' || state === 'paused';
+  const seconds = active ? Math.floor(status.durationMillis / 1000) : Math.floor(draft?.audioLength ?? 0);
+  const clock = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+  return <BottomSheetModal ref={sheet} index={0} overrideReduceMotion={reduced ? ReduceMotion.Always : ReduceMotion.System} snapPoints={[fontScale > 1.3 ? '90%' : '72%']} enableDynamicSizing={false} accessible={false}
+    enablePanDownToClose={!active && state !== 'saving'} containerComponent={Platform.OS === 'ios' ? Overlay : undefined}
+    backgroundStyle={{ backgroundColor: surface, borderRadius: 30 }} handleIndicatorStyle={{ backgroundColor: '#B5A6D6', width: 42 }}
+    onDismiss={() => { if (prepared.current) void finish(true, false); }}>
+    <BottomSheetView accessible={false} style={{ flex: 1, height: '100%' }}><BottomSheetScrollView style={{ flex: 1 }} key={fontScale} contentContainerStyle={[styles.body, { paddingBottom: 20 }]} accessible={false}>
 
-      ref.current?.close();
-    } catch (error) {
-      console.error("Failed to stop recording:", error);
-    }
-  };
-
-  return (
-    <BottomSheetModal
-      ref={ref}
-      containerComponent={ContainerComponent}
-      index={1}
-      snapPoints={["70%"]}
-    >
-      <BottomSheetView
-        style={{ flex: 1, alignItems: "center", paddingBottom: bottom }}
-      >
-        <View style={{ flex: 1 }} />
-
-        <WaveformContainer>
-          <HelloWave
-            isRecording={recordingStatus.isRecording}
-            meterLevel={recordingStatus.metering ?? 0}
-          />
-        </WaveformContainer>
-
-        <ThemedText type="defaultSemiBold">Recording</ThemedText>
-        <ThemedText type="title">
-          {millisecondsToMMSS(recordingStatus.durationMillis)}
-        </ThemedText>
-
-        <ThemedView
-          style={{
-            flexDirection: "row",
-            justifyContent: "space-evenly",
-            width: "100%",
-          }}
-        >
-          <ButtonView>
-            <ButtonContainer onPress={closeBottomSheet}>
-              <Entypo name="cross" size={48} color="black" />
-            </ButtonContainer>
-            <ButtonText>Cancel</ButtonText>
-          </ButtonView>
-
-          <RecordButtonContainer onPress={handleRecording}>
-            <FontAwesome6
-              name={recordingStatus.isRecording ? "stop" : "microphone"}
-              size={48}
-              color="black"
-            />
-          </RecordButtonContainer>
-
-          <ButtonView>
-            <ButtonContainer
-              onPress={pauseRecording}
-              disabled={!recordingStatus.isRecording}
-            >
-              <FontAwesome6
-                name="pause-circle"
-                size={48}
-                color={recordingStatus.isRecording ? "black" : "#f5f5f5"}
-              />
-            </ButtonContainer>
-            <ButtonText>Pause</ButtonText>
-          </ButtonView>
-        </ThemedView>
-      </BottomSheetView>
-    </BottomSheetModal>
-  );
+      <Text maxFontSizeMultiplier={2} style={[styles.heading, { color: ink }]}>{state === 'paused' ? 'Recording paused' : state === 'recording' ? 'Recording' : hasRecording ? 'Recording saved' : 'Voice recording'}</Text>
+      <Text style={[styles.copy, { color: dark ? '#BFB4D3' : '#756D88' }]}>{active ? 'Tap Finish recording when you’re done.' : 'Tap Start recording, then tell your dream.'}</Text>
+      {fontScale <= 1.3 && <View style={styles.orbStage}>{state === 'recording' && <MotionAmbient kind="pulse" style={styles.pulse} />}<View style={[styles.orb, { backgroundColor: active ? '#8E6CD0' : '#E9DFF9' }]}><MotionReveal key={state} subtle><Feather accessible={false} name={state === 'paused' ? 'pause' : 'mic'} size={48} color={active ? '#FFF' : '#8E6CD0'} /></MotionReveal></View></View>}
+      <Text maxFontSizeMultiplier={2} style={[styles.clock, { color: ink }]}>{clock}</Text>
+      <Text style={[styles.note, { color: dark ? '#BFB4D3' : '#756D88' }]}>{draft?.recordingState === 'interrupted' ? 'Recording interrupted. Keep the captured audio or discard it to start again.' : 'Up to 10 minutes · saved only to this dream'}</Text>
+      {error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}</BottomSheetScrollView><View key={`actions:${fontScale}`} style={{ flexShrink: 0, paddingHorizontal: 24, paddingBottom: bottom + 16, gap: 8 }}>
+      {active ? <View style={styles.row}>
+        <MotionPressable accessibilityRole="button" accessibilityLabel={state === 'paused' ? 'Resume recording' : 'Pause recording'} haptic="none" onPress={togglePause} style={[styles.secondary, { borderColor: '#BBA5DA' }]}><Text maxFontSizeMultiplier={2} style={[styles.secondaryText, { color: ink }]}>{state === 'paused' ? 'Resume' : 'Pause'}</Text></MotionPressable>
+        <MotionPressable accessibilityRole="button" accessibilityLabel="Finish recording" haptic="none" onPress={() => finish(false)} style={styles.primary}><Text maxFontSizeMultiplier={2} style={styles.buttonText}>Finish recording</Text></MotionPressable>
+      </View> : hasRecording ? <View style={styles.row}>
+        <MotionPressable accessibilityRole="button" onPress={discard} style={styles.secondary}><Text maxFontSizeMultiplier={2} style={[styles.secondaryText, { color: ink }]}>Discard audio</Text></MotionPressable>
+        <MotionPressable accessibilityRole="button" haptic={draft?.temporaryAudioUri ? 'none' : 'light'} onPress={draft?.temporaryAudioUri ? retryRetention : () => sheet.current?.dismiss()} style={styles.primary}><Text maxFontSizeMultiplier={2} style={styles.buttonText}>{draft?.temporaryAudioUri ? 'Recover audio' : 'Use recording'}</Text></MotionPressable>
+      </View> : <MotionPressable accessibilityRole="button" accessibilityLabel="Start recording" disabled={state === 'saving'} haptic="none" onPress={start} style={[styles.primary, { width: '100%', flexBasis: 'auto', flexGrow: 0 }]}><Text maxFontSizeMultiplier={2} style={styles.buttonText}>{state === 'saving' ? 'Saving recording…' : 'Start recording'}</Text></MotionPressable>}
+      <MotionPressable accessibilityRole="button" disabled={state === 'saving'} onPress={() => active ? finish(true) : sheet.current?.dismiss()} style={{ padding: 16 }}><Text maxFontSizeMultiplier={2} style={[styles.secondaryText, { color: dark ? '#BFB4D3' : '#756D88' }]}>{active ? 'Close & keep captured audio' : 'Back to draft'}</Text></MotionPressable>
+    </View></BottomSheetView>
+  </BottomSheetModal>;
 });
-RecorderBottomSheet.displayName = "RecorderBottomSheet";
-
+RecorderBottomSheet.displayName = 'RecorderBottomSheet';
 export default RecorderBottomSheet;
-
-const ButtonView = styled.View({});
-
-const ButtonContainer = styled.TouchableOpacity({
-  backgroundColor: "#f5f5f5",
-  borderRadius: "50%",
-  padding: 16,
-  margin: 16,
-  justifyContent: "center",
-  alignItems: "center",
-});
-
-const RecordButtonContainer = styled.TouchableOpacity({
-  backgroundColor: "#f5f5f5",
-  borderRadius: 100,
-  padding: 16,
-  margin: 16,
-  justifyContent: "center",
-  alignItems: "center",
-  height: 100,
-  width: 100,
-});
-
-const ButtonText = styled(ThemedText)`
-  text-align: center;
-`;
-
-const WaveformContainer = styled.View({
-  width: "100%",
-  height: 120,
-  marginBottom: 20,
-  paddingHorizontal: 20,
+const styles = StyleSheet.create({
+  body: { paddingHorizontal: 24, alignItems: 'center', gap: 14 }, eyebrow: { fontSize: 11, letterSpacing: 2, marginTop: 20, fontFamily: 'Outfit_500Medium' }, heading: { fontSize: 30, fontFamily: 'Outfit_600SemiBold', textAlign: 'center' }, copy: { fontSize: 17, textAlign: 'center', lineHeight: 23, fontFamily: 'Outfit_400Regular' }, orbStage: { width: 110, height: 110, marginTop: 14 }, pulse: { position: 'absolute', inset: 0, borderRadius: 55, backgroundColor: '#6950C5' }, orb: { width: 110, height: 110, borderRadius: 55, alignItems: 'center', justifyContent: 'center' }, clock: { fontSize: 40, fontVariant: ['tabular-nums'], fontFamily: 'Outfit_500Medium' }, note: { textAlign: 'center', fontSize: 14, lineHeight: 21 }, row: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, width: '100%', marginTop: 8 }, primary: { backgroundColor: '#6950C5', minHeight: 52, borderRadius: 18, padding: 16, flexGrow: 1, flexBasis: 140, alignItems: 'center', justifyContent: 'center' }, secondary: { borderWidth: 1, borderColor: '#BBA5DA', borderRadius: 18, minHeight: 52, padding: 16, flexGrow: 1, flexBasis: 140, alignItems: 'center', justifyContent: 'center' }, secondaryText: { fontFamily: 'Outfit_500Medium', fontSize: 17, textAlign: 'center' }, buttonText: { fontSize: 17, textAlign: 'center', color: '#FFF', fontFamily: 'Outfit_600SemiBold' }, error: { color: '#C75B72', textAlign: 'center', fontSize: 16, lineHeight: 24 },
 });

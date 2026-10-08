@@ -1,19 +1,9 @@
-import {
-  DarkTheme,
-  DefaultTheme,
-  ThemeProvider,
-} from "@react-navigation/native";
+import { useMotionPreference } from '@/components/motion/Motion';
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
-import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
 import "react-native-reanimated";
 
-import { useColorScheme } from "@/hooks/useColorScheme";
-import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { supabase } from "@/util/supabase";
 import {
   useFonts,
   Outfit_100Thin,
@@ -26,17 +16,12 @@ import {
   Outfit_800ExtraBold,
   Outfit_900Black,
 } from "@expo-google-fonts/outfit";
-import { AuthProvider } from "@/contexts/AuthProvider";
-import { OnboardingProvider } from "@/contexts/OnboardingProvider";
+import { ContextWrapper } from "@/contexts/ContextWrappers";
 
-// Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
-const queryClient = new QueryClient();
 
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
-
-  const [loaded] = useFonts({
+  const [loaded, fontError] = useFonts({
     SpaceMono: require("../assets/fonts/SpaceMono-Regular.ttf"),
     Outfit_100Thin,
     Outfit_200ExtraLight,
@@ -50,74 +35,50 @@ export default function RootLayout() {
   });
 
   useEffect(() => {
-    if (loaded) {
+    if (loaded || fontError) {
       SplashScreen.hideAsync();
     }
-  }, [loaded]);
+  }, [loaded, fontError]);
 
-  useEffect(() => {
-    const signIn = async () => {
-      const user = (await supabase.auth.getSession()).data.session?.user;
-
-      if (!user) {
-        await supabase.auth.signInAnonymously();
-      }
-    };
-
-    signIn();
-  }, []);
-
-  if (!loaded) {
+  if (!loaded && !fontError) {
     return null;
   }
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <AuthProvider>
-        <OnboardingProvider>
-          <QueryClientProvider client={queryClient}>
-            <BottomSheetModalProvider>
-              <ThemeProvider
-                value={colorScheme === "dark" ? DarkTheme : DefaultTheme}
-              >
-                <Stack>
-                  <Stack.Screen
-                    name="onboarding"
-                    options={{ headerShown: false }}
-                  />
-                  <Stack.Screen
-                    name="(tabs)"
-                    options={{ headerShown: false }}
-                  />
-                  <Stack.Screen
-                    name="summary"
-                    options={{
-                      presentation: "card",
-                      headerShown: false,
-                      animation: "slide_from_bottom",
-                    }}
-                  />
-                  <Stack.Screen
-                    name="AddDream"
-                    options={{
-                      presentation: "fullScreenModal",
-                      headerShown: false,
-                    }}
-                  />
-                  <Stack.Screen
-                    name="Dream"
-                    options={{
-                      headerShown: false,
-                    }}
-                  />
-                  <Stack.Screen name="+not-found" />
-                </Stack>
-                <StatusBar style="auto" />
-              </ThemeProvider>
-            </BottomSheetModalProvider>
-          </QueryClientProvider>
-        </OnboardingProvider>
-      </AuthProvider>
-    </GestureHandlerRootView>
+    <ContextWrapper>
+      <RootNavigator />
+    </ContextWrapper>
   );
+}
+
+function RootNavigator() {
+  const reduced = useMotionPreference();
+  return <Stack screenOptions={{ animation: reduced ? 'fade' : 'default' }}>
+        <Stack.Screen name="onboarding" options={{ headerShown: false }} />
+        <Stack.Screen name="onboarding-preview" options={{ headerShown: false }} />
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen
+          name="summary"
+          options={{
+            presentation: "card",
+            headerShown: false,
+            animation: reduced ? "fade" : "slide_from_bottom",
+          }}
+        />
+        <Stack.Screen
+          name="AddDream"
+          options={{
+            presentation: "fullScreenModal",
+            headerShown: false,
+          }}
+        />
+        <Stack.Screen
+          name="Dream"
+          options={{
+            headerShown: false,
+          }}
+        />
+        <Stack.Screen name="preferences" options={{ headerShown: false }} />
+        <Stack.Screen name="+not-found" />
+      </Stack>;
 }

@@ -1,0 +1,33 @@
+import React from 'react';
+import renderer from 'react-test-renderer';
+import { Alert, Modal, Platform } from 'react-native';
+import { afterEach, expect, it, jest } from '@jest/globals';
+import { SortButton } from '../Page';
+jest.mock('@/components/motion/Motion', () => ({ MotionPressable: jest.requireActual<Record<string, unknown>>('react-native').Pressable, MotionReveal: jest.requireActual<Record<string, unknown>>('react-native').View }));
+jest.mock('../theme', () => ({ useJournalColors: () => ({ surface: '#fff', ink: '#222' }) }));
+jest.mock('expo-router', () => ({ router: {} }));
+const originalOS = Platform.OS;
+afterEach(() => { Object.defineProperty(Platform, 'OS', { value: originalOS }); jest.restoreAllMocks(); });
+const press = (tree: renderer.ReactTestRenderer, label: string) => renderer.act(() => tree.root.findAll(node => node.props.accessibilityLabel === label && typeof node.props.onPress === 'function').at(-1)!.props.onPress());
+it('native sorting waits for an explicit selection', () => {
+  Object.defineProperty(Platform, 'OS', { value: 'ios' });
+  const alert = jest.spyOn(Alert, 'alert'); const onChange = jest.fn();
+  let tree!: renderer.ReactTestRenderer; renderer.act(() => { tree = renderer.create(<SortButton value="newest" onChange={onChange} />); });
+  press(tree, 'Sorted newest first. Change sort order');
+  expect(onChange).not.toHaveBeenCalled();
+  const choices = alert.mock.calls[0][2]!;
+  expect(choices.map(choice => choice.text)).toEqual(['Newest first', 'Oldest first', 'Cancel']);
+  renderer.act(() => choices[1].onPress!());
+  expect(onChange).toHaveBeenCalledTimes(1); expect(onChange).toHaveBeenCalledWith('oldest');
+  renderer.act(() => tree.unmount());
+});
+it('web sorting can be canceled or committed without native Alert support', () => {
+  Object.defineProperty(Platform, 'OS', { value: 'web' });
+  const onChange = jest.fn();
+  let tree!: renderer.ReactTestRenderer; renderer.act(() => { tree = renderer.create(<SortButton value="newest" onChange={onChange} />); });
+  press(tree, 'Sorted newest first. Change sort order'); expect(tree.root.findByType(Modal).props.visible).toBe(true); expect(onChange).not.toHaveBeenCalled();
+  press(tree, 'Cancel sorting'); expect(tree.root.findByType(Modal).props.visible).toBe(false); expect(onChange).not.toHaveBeenCalled();
+  press(tree, 'Sorted newest first. Change sort order'); press(tree, 'Oldest first');
+  expect(onChange).toHaveBeenCalledTimes(1); expect(onChange).toHaveBeenCalledWith('oldest'); expect(tree.root.findByType(Modal).props.visible).toBe(false);
+  renderer.act(() => tree.unmount());
+});
