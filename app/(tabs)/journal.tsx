@@ -1,5 +1,5 @@
 import { MotionPressable, MotionReveal } from '@/components/motion/Motion';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { SectionList, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -16,7 +16,7 @@ export default function JournalScreen() {
   const { entries, hydrated, syncing, error, refresh, bottomSpace } = useDreamJournal();
   const [favorites, setFavorites] = useState(false);
   const [sort, setSort] = useState<DreamSort>('newest');
-  const sections = useMemo(() => dreamSections(filterDreams(entries, { favorites, sort })), [entries, favorites, sort]);
+  const sections = dreamSections(filterDreams(entries, { favorites, sort }));
   return <SafeAreaView edges={['top', 'left', 'right']} style={{ flex: 1, backgroundColor: c.background }}>
     <MotionReveal style={{ flex: 1 }}><SectionList key={fontScale} sections={sections} keyExtractor={item => item.id} renderItem={({ item }) => <DreamListItem dream={item} />} renderSectionHeader={({ section }) => <Text accessibilityRole="header" style={[pageStyles.month, { color: c.muted }]}>{section.title}</Text>} stickySectionHeadersEnabled={false} showsVerticalScrollIndicator={false} refreshing={syncing} onRefresh={refresh} contentContainerStyle={[pageStyles.content, { paddingBottom: bottomSpace }]} ListHeaderComponent={<>
       <PageHeader title="Journal" subtitle="All your saved dreams." action="add" />

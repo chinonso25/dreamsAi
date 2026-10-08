@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { AccessibilityInfo, AppState, Pressable, type PressableProps, type ViewProps } from 'react-native';
 import Animated, { cubicBezier, Easing, FadeIn, FadeInDown, FadeOut, ReduceMotion, useReducedMotion, type CSSAnimationKeyframes } from 'react-native-reanimated';
 import { useIsFocused } from 'expo-router/react-navigation';
@@ -33,7 +33,7 @@ export function MotionPressable({ style, onPress, onPressIn, onPressOut, childre
 /** Reveal containers, never recycled list rows. */
 export function MotionReveal({ children, delay = 0, subtle = false, style, ...props }: ViewProps & { delay?: number; subtle?: boolean }) {
   const reduced = useMotionPreference();
-  const entering = useMemo(() => (reduced || subtle ? FadeIn.duration(150) : FadeInDown.duration(250).easing(EASE_OUT).delay(Math.min(delay, 160))).reduceMotion(ReduceMotion.System), [reduced, delay, subtle]);
+  const entering = (reduced || subtle ? FadeIn.duration(150) : FadeInDown.duration(250).easing(EASE_OUT).delay(Math.min(delay, 160))).reduceMotion(ReduceMotion.System);
   return <Animated.View {...props} entering={entering} exiting={FadeOut.duration(120).reduceMotion(ReduceMotion.System)} style={style}>{children}</Animated.View>;
 }
 export function MotionSelection({ selected, children, style }: ViewProps & { selected: boolean }) {

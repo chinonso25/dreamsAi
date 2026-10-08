@@ -2,7 +2,7 @@ import { haptic } from '@/util/haptics';
 import { ReduceMotion } from 'react-native-reanimated';
 import { MotionPressable, MotionAmbient, MotionReveal, useMotionPreference } from '@/components/motion/Motion';
 import { BottomSheetModal, BottomSheetView, BottomSheetScrollView } from '@gorhom/bottom-sheet';
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Alert, AppState, Platform, StyleSheet, Text, View, useColorScheme, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FullWindowOverlay } from 'react-native-screens';
@@ -37,7 +37,7 @@ const RecorderBottomSheet = forwardRef<BottomSheetModal, Props>(({ onRecordingSa
   const surface = dark ? '#211D32' : '#FAF7FF';
   useEffect(() => { duration.current = status.durationMillis; }, [status.durationMillis]);
 
-  const finish = useCallback(async (interrupted = false, close = true) => {
+  const finish = async (interrupted = false, close = true) => {
     if (busy.current) { if (interrupted) interruptionRequested.current = true; return; }
     if (!prepared.current || !recordingDraftId.current) return;
     interruptionRequested.current = false;
@@ -69,7 +69,7 @@ const RecorderBottomSheet = forwardRef<BottomSheetModal, Props>(({ onRecordingSa
       if (!prepared.current || !mounted.current) await endRecordingAudio().catch(() => undefined);
       busy.current = false;
     }
-  }, [onRecordingSaved, recording]);
+  };
   useEffect(() => {
     nativeEventHandler.current = async event => {
       if ((!event.hasError && !event.mediaServicesDidReset && !event.isFinished) || busy.current || !prepared.current || !recordingDraftId.current) return;
@@ -88,7 +88,7 @@ const RecorderBottomSheet = forwardRef<BottomSheetModal, Props>(({ onRecordingSa
     };
   }, [recording]);
   const finishRef = useRef(finish);
-  useEffect(() => { finishRef.current = finish; }, [finish]);
+  useEffect(() => { finishRef.current = finish; });
   useEffect(() => {
     mounted.current = true;
     const listener = AppState.addEventListener('change', next => {
@@ -102,9 +102,9 @@ const RecorderBottomSheet = forwardRef<BottomSheetModal, Props>(({ onRecordingSa
   }, []);
   useEffect(() => {
     if (status.durationMillis >= MAX_SECONDS * 1000 && prepared.current && !busy.current) {
-      void finish(true, false);
+      void finishRef.current(true, false);
     }
-  }, [status.durationMillis, finish]);
+  }, [status.durationMillis]);
 
   async function start() {
     if (busy.current) return;
