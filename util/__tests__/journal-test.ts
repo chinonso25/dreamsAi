@@ -335,3 +335,24 @@ it('counts missing old recordings and preserves voice-only sources without creat
     expect(useJournalStore.getState().entries.find(entry => entry.id === 'voice-only')).toBe(voice); expect(useJournalStore.getState().entries.find(entry => entry.id === 'written-recording')).toBe(written);
   } finally { audio.mockRestore(); }
 });
+it('keeps unsynced edits and recordings when another device deleted the remote dream, including after restart', async () => {
+  const audio = 'file:///documents/dreamer-recordings/unsynced-words.m4a';
+  useJournalStore.setState({ entries: [sample({ transcript: 'My private unsynced correction', sync_status: 'local', local_audio_uri: audio })] });
+  api.mockImplementation((path, options) => (options as RequestInit)?.method === 'PUT'
+    ? Promise.reject(Object.assign(new Error('This dream was deleted. Save a new entry instead.'), { status: 409 }))
+    : Promise.resolve({ dreams: [], deleted: [{ id: 'dream-a', user_id: 'guest-a', deleted_at: '2026-10-09T01:00:00.000Z', sync_version: 9 }], next_cursor: null, sync_cursor: '9' }));
+  await refreshDreams();
+  const conflict = useJournalStore.getState().entries[0];
+  expect(conflict).toMatchObject({ transcript: 'My private unsynced correction', sync_status: 'error', local_audio_uri: audio });
+  expect(conflict.last_error).toBe('This dream was deleted on another device. Your unsynced changes are kept here. Copy them into a new entry to sync again.');
+  expect(useJournalStore.getState().deleted).toHaveLength(0); expect(useJournalStore.getState().cursors['guest-a']).toBe('9'); expect(mockDeleteFile).not.toHaveBeenCalled();
+  const attempts = api.mock.calls.filter(call => (call[1] as RequestInit)?.method === 'PUT').length;
+  await syncJournal(); expect(api.mock.calls.filter(call => (call[1] as RequestInit)?.method === 'PUT')).toHaveLength(attempts);
+  await expect(retryDream('dream-a')).rejects.toThrow('Copy them into a new entry');
+  const disk = new Map(jest.mocked(AsyncStorage.setItem).mock.calls.map(([key, value]) => [key, value]));
+  jest.mocked(AsyncStorage.getItem).mockImplementation(async key => disk.get(key) ?? null);
+  jest.mocked(AsyncStorage.getAllKeys).mockResolvedValue([...disk.keys()]);
+  jest.mocked(AsyncStorage.multiGet).mockImplementation(async keys => keys.map(key => [key, disk.get(key) ?? null]));
+  let persistence!: typeof import('../journal-persistence'); jest.isolateModules(() => { persistence = jest.requireActual('../journal-persistence'); });
+  const restored = await persistence.readJournal(); expect(restored.entries.find(entry => entry.id === 'dream-a')).toMatchObject({ transcript: conflict.transcript, local_audio_uri: audio, sync_status: 'error', last_error: conflict.last_error });
+});

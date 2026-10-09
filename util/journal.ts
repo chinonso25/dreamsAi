@@ -29,6 +29,7 @@ const message = (e: unknown) => {
   if (/failed to fetch|network request failed|networkerror|load failed/i.test(e.message)) return 'You’re offline or the connection was interrupted. Your dream is saved on this device; reconnect and tap Retry.';
   return e.message;
 };
+const deletedConflict = 'This dream was deleted on another device. Your unsynced changes are kept here. Copy them into a new entry to sync again.';
 const interrupted = 'Processing was interrupted. Your dream is saved; tap Restart to begin again.';
 function remoteDream(remote: DreamDTO): Journal {
   const { error, ...entry } = remote;
@@ -135,7 +136,7 @@ export async function syncJournal() {
     let firstPass = true;
     do {
       syncRequested = false;
-      const ids = useJournalStore.getState().entries.filter(entry => entry.user_id === owner && (entry.sync_status === 'local' || firstPass && entry.sync_status !== 'synced')).map(entry => entry.id);
+      const ids = useJournalStore.getState().entries.filter(entry => entry.user_id === owner && entry.last_error !== deletedConflict && (entry.sync_status === 'local' || firstPass && entry.sync_status !== 'synced')).map(entry => entry.id);
       for (const id of ids) { if (!validRequest(owner, token)) return; await syncEntry(id, owner, token); }
       firstPass = false;
       for (const tombstone of [...useJournalStore.getState().deleted]) {
@@ -189,6 +190,12 @@ export async function refreshDreams() {
         const local = merged.get(deletion.id);
         if (local && local.user_id !== owner) continue;
         if (local?.sync_version !== undefined && local.sync_version > deletion.sync_version) continue;
+        if (local && local.sync_status !== 'synced') {
+          merged.set(deletion.id, { ...local, sync_status: 'error', last_error: deletedConflict });
+          // Keep the original record and its audio through restart; a durable tombstone would hide it.
+          blocked.add(`${owner}:${deletion.id}`);
+          continue;
+        }
         if (local) merged.delete(deletion.id);
         if (!blocked.has(`${owner}:${deletion.id}`)) deleted.push({ ...deletion, synced: true, local_audio_uri: local?.local_audio_uri, recovery_source: (local as RecoveredJournal | undefined)?.recovery_source, cleanupPending: true });
         blocked.add(`${owner}:${deletion.id}`);
@@ -261,6 +268,7 @@ export async function requestDreamProcessing(id: string): Promise<void> {
 }
 export async function retryDream(id: string) {
   const entry = requireEntry(id);
+  if (entry.last_error === deletedConflict) throw new Error(deletedConflict);
   const retryProcessing = ['pending', 'processing', 'error'].includes(entry.processing_status);
   if (entry.sync_status !== 'synced') { replace({ ...entry, sync_status: 'local' }); await persist(); await syncJournal(); }
   if (retryProcessing) await requestDreamProcessing(id);
