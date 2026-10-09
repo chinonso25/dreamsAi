@@ -5,6 +5,8 @@ import { apiRequest } from '../api';
 import { completeDraft, updateDraft, useCaptureDraft } from '../drafts';
 import { beginAccountDeletion, clearDeletedAccountJournal, saveDream, updateDream, deleteDream, refreshDreams, hydrateJournal, requestDreamProcessing, retryDream, syncJournal, useJournalStore, invalidateJournalRequests, rebindJournalOwner, recoverExpiredGuestJournal } from '../journal';
 import type { Journal } from '@/types';
+import { onlineManager } from '@tanstack/react-query';
+import { queryClient } from '../query-client';
 
 jest.mock('@react-native-async-storage/async-storage', () => ({ getItem: jest.fn<() => Promise<string | null>>(), setItem: jest.fn<() => Promise<void>>(), removeItem: jest.fn<() => Promise<void>>(), getAllKeys: jest.fn<() => Promise<string[]>>(), multiGet: jest.fn<() => Promise<[string, string | null][]>>() }));
 jest.mock('expo-crypto', () => ({ randomUUID: () => 'new-id', CryptoDigestAlgorithm: { SHA256: 'sha256' }, digestStringAsync: async (_algorithm: string, value: string) => jest.requireActual<typeof import('node:crypto')>('node:crypto').createHash('sha256').update(value).digest('hex') }));
@@ -23,6 +25,8 @@ function resolveSave(path: unknown, options: unknown) {
 }
 async function until(check: () => boolean) { for (let index = 0; index < 40; index++) { if (check()) return; await Promise.resolve(); } throw new Error('Expected async boundary was not reached'); }
 beforeEach(async () => {
+  queryClient.setQueryDefaults(['account'], { gcTime: Infinity, retry: false });
+  queryClient.clear(); onlineManager.setOnline(true); invalidateJournalRequests();
   mockJournalOwner = 'guest-a';
   jest.mocked(AsyncStorage.getItem).mockResolvedValue(null); jest.mocked(AsyncStorage.setItem).mockResolvedValue(undefined); jest.mocked(AsyncStorage.removeItem).mockResolvedValue(undefined); jest.mocked(AsyncStorage.getAllKeys).mockResolvedValue([]); jest.mocked(AsyncStorage.multiGet).mockResolvedValue([]);
   await hydrateJournal(); await syncJournal();
@@ -31,7 +35,7 @@ beforeEach(async () => {
   api.mockImplementation(resolveSave);
   jest.mocked(expoFetch).mockResolvedValue({ ok: true, json: async () => ({ audio_key: 'audio-a' }) } as Awaited<ReturnType<typeof expoFetch>>);
 });
-afterEach(async () => { await syncJournal(); });
+afterEach(async () => { await syncJournal(); queryClient.clear(); });
 it('saves locally and returns successfully when the backend is offline', async () => {
   api.mockRejectedValue(new TypeError('Failed to fetch'));
   const entry = await saveDream({ id: 'dream-a', transcript: 'Keep this dream', dream_date: '2026-10-07' });
@@ -207,6 +211,8 @@ it('rejects delayed requests after an account change, including returning to the
   api.mockImplementation(() => new Promise(resolve => { finishGet = resolve; }));
   const refreshing = refreshDreams(); await until(() => Boolean(finishGet));
   mockJournalOwner = 'guest-b'; invalidateJournalRequests();
+  queryClient.setQueryDefaults(['account'], { gcTime: Infinity, retry: false });
+  queryClient.clear(); onlineManager.setOnline(true); invalidateJournalRequests();
   mockJournalOwner = 'guest-a'; invalidateJournalRequests();
   finishGet({ dreams: [sample({ transcript: 'Stale session result' })], deleted: [], next_cursor: null, sync_cursor: '2' }); await refreshing;
   expect(useJournalStore.getState().entries[0].transcript).toBe('Flying over the water');

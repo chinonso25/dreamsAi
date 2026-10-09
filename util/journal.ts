@@ -3,6 +3,8 @@ import * as Crypto from 'expo-crypto';
 import type { Journal } from '@/types';
 import { apiRequest, ApiError } from './api';
 import { getCurrentUser } from './auth-client';
+import { onlineManager, queryOptions } from '@tanstack/react-query';
+import { clearAccountQueries, journalQueryKey, queryClient } from './query-client';
 import { parseDreamResponse, parseDreamListResponse, parseDreamSyncResponse, toSaveDreamInput, validateDreamInput, type DreamDTO, type DreamListResponse, type DreamDeletionDTO, type SaveDreamInput, type EditDreamPatch, localDateKey } from '../shared/dream-contract';
 import { persistJournal, readJournal, waitForJournalWrites, type JournalDeletion } from './journal-persistence';
 import { nextRevision, editDream, mergeRemote, normalizeDreamClock } from './journal-transitions';
@@ -15,14 +17,19 @@ let hydration: Promise<void> | undefined;
 let flush: Promise<void> | undefined;
 let syncRequested = false;
 let generation = 0;
-const refreshing = new Map<string, Promise<void>>();
 const processing = new Map<string, Promise<void>>();
 const suspendedOwners = new Set<string>();
 function ownerBlocked(owner: string) { return suspendedOwners.has(owner) || useJournalStore.getState().retiredOwners.includes(owner); }
 function accessible(owner: string) { return !ownerBlocked(owner) && (owner === 'device' || owner === getCurrentUser()?.id); }
 function canSyncOwner(owner: string) { return owner !== 'device' && accessible(owner); }
 function validRequest(owner: string, token: number) { return generation === token && canSyncOwner(owner); }
-export function invalidateJournalRequests() { generation++; syncRequested = false; refreshing.clear(); cancelJournalAudio(); }
+export function invalidateJournalRequests() {
+  generation++; syncRequested = false; cancelJournalAudio();
+  void queryClient.cancelQueries({ queryKey: ['account'] });
+  void queryClient.invalidateQueries({ queryKey: ['account'], refetchType: 'none' });
+  const owner = getCurrentUser()?.id;
+  queryClient.removeQueries({ predicate: query => query.queryKey[0] === 'account' && query.queryKey[1] !== owner });
+}
 export const localDate = localDateKey;
 const message = (e: unknown) => {
   if (!(e instanceof Error)) return 'Could not sync. Your dream is saved on this device.';
@@ -36,6 +43,9 @@ function remoteDream(remote: DreamDTO): Journal {
   return { ...entry, sync_status: 'synced', last_error: error || undefined };
 }
 function persist() { return persistJournal(useJournalStore.getState()); }
+function markCloudJournalStale(owner: string) {
+  if (owner !== 'device') void queryClient.invalidateQueries({ queryKey: journalQueryKey(owner), refetchType: 'none' });
+}
 export async function hydrateJournal() {
   if (!hydration) hydration = (async () => {
     const data = await readJournal();
@@ -67,6 +77,7 @@ export async function saveDream(input: SaveDreamInput & { local_audio_uri?: stri
   // Persistence must succeed before capture clears its draft or navigates.
   useJournalStore.setState(state => ({ entries: [entry, ...state.entries.filter(item => item.id !== entry.id)] }));
   await persist();
+  markCloudJournalStale(entry.user_id);
   void syncJournal();
   return entry;
 }
@@ -79,13 +90,13 @@ export async function updateDream(id: string, patch: EditDreamPatch) {
   const next = editDream(entry, input);
   validateDreamInput(toSaveDreamInput(next));
   replace(next);
-  await persist(); void syncJournal();
+  await persist(); markCloudJournalStale(entry.user_id); void syncJournal();
 }
 export async function deleteDream(id: string) {
   await hydrateJournal();
   const entry = requireEntry(id);
   useJournalStore.setState(state => ({ entries: state.entries.filter(item => item.id !== id), deleted: [...state.deleted.filter(item => item.id !== id), { id, user_id: entry.user_id, local_audio_uri: entry.local_audio_uri, recovery_source: (entry as RecoveredJournal).recovery_source, cleanupPending: true }] }));
-  await persist(); void syncJournal();
+  await persist(); markCloudJournalStale(entry.user_id); void syncJournal();
 }
 async function syncEntry(id: string, owner: string, token: number) {
   const queued = currentEntry(id, owner);
@@ -131,7 +142,7 @@ export async function syncJournal() {
       if (generation !== token) return;
       try { await cleanupTombstone(tombstone); } catch { useJournalStore.setState({ error: 'The dream was removed. Audio cleanup on this device will retry when your journal syncs.' }); }
     }
-    if (!owner || !validRequest(owner, token)) return;
+    if (!owner || !validRequest(owner, token) || !onlineManager.isOnline()) return;
     useJournalStore.setState({ syncing: true });
     let firstPass = true;
     do {
@@ -156,14 +167,24 @@ export async function syncJournal() {
   })().catch(error => { if (generation === token) useJournalStore.setState({ error: message(error) }); }).finally(() => { useJournalStore.setState({ syncing: false }); flush = undefined; });
   return flush;
 }
+export function journalCloudQueryOptions(owner: string) {
+  return queryOptions({
+    queryKey: journalQueryKey(owner),
+    queryFn: ({ signal }) => pullDreams(owner, signal),
+  });
+}
 export async function refreshDreams() {
   const owner = getCurrentUser()?.id;
-  if (!owner || ownerBlocked(owner)) return;
-  const existing = refreshing.get(owner); if (existing) return existing;
+  if (!owner || ownerBlocked(owner) || !onlineManager.isOnline()) return;
+  // Explicit refresh bypasses staleTime but shares an already-running request.
+  await queryClient.fetchQuery({ ...journalCloudQueryOptions(owner), staleTime: 0 }).catch(() => {});
+}
+async function pullDreams(owner: string, signal: AbortSignal) {
   const token = generation;
-  const job = (async () => {
+  const allowed = () => !signal.aborted && validRequest(owner, token);
+  try {
     await syncJournal();
-    if (!validRequest(owner, token)) return;
+    if (!allowed()) throw new Error('Journal refresh was cancelled.');
     let legacy = false;
     let cursor: string | undefined;
     let watermark: string | undefined;
@@ -172,12 +193,12 @@ export async function refreshDreams() {
     do {
       const params = new URLSearchParams({ limit: '100', ...(legacy ? {} : { since }), ...(cursor ? { cursor } : {}), ...(watermark ? { until: watermark } : {}) });
       let raw: unknown;
-      try { raw = await apiRequest(`${legacy ? '/v1/dreams' : '/v1/dreams/sync'}?${params}`, { expectedOwner: owner }); }
+      try { raw = await apiRequest(`${legacy ? '/v1/dreams' : '/v1/dreams/sync'}?${params}`, { expectedOwner: owner, signal }); }
       catch (error) {
-        if (!legacy && error && typeof error === 'object' && 'status' in error && error.status === 404) { legacy = true; cursor = undefined; watermark = undefined; raw = await apiRequest('/v1/dreams', { expectedOwner: owner }); }
+        if (!legacy && error && typeof error === 'object' && 'status' in error && error.status === 404) { legacy = true; cursor = undefined; watermark = undefined; raw = await apiRequest('/v1/dreams', { expectedOwner: owner, signal }); }
         else throw error;
       }
-      if (!validRequest(owner, token)) return;
+      if (!allowed()) throw new Error('Journal refresh was cancelled.');
       // Old backends return only dreams: retain missing local rows; absence is never a deletion.
       const page: DreamListResponse & { deleted?: DreamDeletionDTO[] } = legacy || raw && typeof raw === 'object' && !('deleted' in raw) ? parseDreamListResponse(raw) : parseDreamSyncResponse(raw);
       const deletions = page.deleted || [];
@@ -217,16 +238,21 @@ export async function refreshDreams() {
       if (cursor) seen.add(cursor);
       useJournalStore.setState({ entries: [...merged.values()].sort((a, b) => b.dream_date.localeCompare(a.dream_date)), deleted, error: undefined });
       await persist();
-      if (!cursor && !legacy && page.deleted && watermark && validRequest(owner, token)) {
+      if (!cursor && !legacy && page.deleted && watermark && allowed()) {
         const previousCursors = useJournalStore.getState().cursors;
         useJournalStore.setState({ cursors: { ...previousCursors, [owner]: watermark } });
         try { await persist(); } catch (error) { useJournalStore.setState({ cursors: previousCursors }); throw error; }
       }
     } while (cursor);
-  })().catch(error => { if (validRequest(owner, token)) useJournalStore.setState({ error: message(error) }); }).finally(() => { if (refreshing.get(owner) === job) refreshing.delete(owner); });
-  refreshing.set(owner, job); return job;
+    // Cache reconciliation metadata; screens continue reading the durable journal.
+    return { owner, cursor: useJournalStore.getState().cursors[owner] || null };
+  } catch (error) {
+    if (allowed()) useJournalStore.setState({ error: message(error) });
+    throw error;
+  }
 }
 export async function requestDreamProcessing(id: string): Promise<void> {
+  if (!onlineManager.isOnline()) throw new Error('You’re offline. Your dream is saved; reconnect before creating its summary.');
   await hydrateJournal();
   const initial = requireEntry(id);
   const owner = initial.user_id;
@@ -334,6 +360,7 @@ export async function recoverExpiredGuestJournal(previousId: string, nextId: str
 export async function beginAccountDeletion(owner: string) {
   await hydrateJournal();
   suspendedOwners.add(owner);
+  await clearAccountQueries(owner);
   await Promise.allSettled([...(flush ? [flush] : []), ...processing.values()]);
   await waitForJournalWrites();
 }
@@ -343,6 +370,7 @@ export function cancelAccountDeletion(owner: string) { suspendedOwners.delete(ow
 export async function clearDeletedAccountJournal(owner: string) {
   await hydrateJournal();
   suspendedOwners.add(owner);
+  await clearAccountQueries(owner);
   const before = useJournalStore.getState();
   const removed = before.entries.filter(entry => entry.user_id === owner);
   const removedTombstones = before.deleted.filter(entry => entry.user_id === owner);

@@ -16,6 +16,8 @@ import { useEffect } from "react";
 import { InitialiseNotifications } from "@/util/notification";
 import { MotionProvider } from "@/components/motion/Motion";
 import RecordingPlaybackBar from "@/components/RecordingPlaybackBar";
+import { CloudQueryProvider } from './CloudQueryProvider';
+import { CloudJournalSync } from './CloudJournalSync';
 
 type Props = {
   children: React.ReactNode;
@@ -36,11 +38,12 @@ export const ContextWrapper = ({ children }: Props) => {
   }, [preview]);
 
 
-  if (preview) return <MotionProvider><OnboardingProvider><SubscriptionProvider disabled>{children}</SubscriptionProvider></OnboardingProvider></MotionProvider>;
+  if (preview) return <CloudQueryProvider><MotionProvider><OnboardingProvider><SubscriptionProvider disabled>{children}</SubscriptionProvider></OnboardingProvider></MotionProvider></CloudQueryProvider>;
 
   return (
-    <MotionProvider><GestureHandlerRootView style={{ flex: 1 }}>
+    <CloudQueryProvider><MotionProvider><GestureHandlerRootView style={{ flex: 1 }}>
       <AuthProvider>
+        <CloudJournalSync />
         <SubscriptionProvider>
           <OnboardingProvider>
             <BottomSheetModalProvider>
@@ -54,6 +57,6 @@ export const ContextWrapper = ({ children }: Props) => {
           </OnboardingProvider>
         </SubscriptionProvider>
       </AuthProvider>
-    </GestureHandlerRootView></MotionProvider>
+    </GestureHandlerRootView></MotionProvider></CloudQueryProvider>
   );
 };

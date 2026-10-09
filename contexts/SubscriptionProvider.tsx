@@ -4,7 +4,9 @@ import Purchases, { PurchasesOffering, CustomerInfo, LOG_LEVEL } from 'react-nat
 import { useAuth } from './AuthProvider';
 import { presentStorePaywall, StorePaywallResult } from '@/util/paywall';
 import { ensureSession, getCurrentUser, type DreamerUser } from '@/util/auth-client';
-import { apiRequest } from '@/util/api';
+import { onlineManager, useQuery } from '@tanstack/react-query';
+import { queryClient } from '@/util/query-client';
+import { entitlementQueryOptions } from '@/util/entitlement-query';
 import { discountedOffering } from '@/util/onboarding-offer';
 
 export type PaywallOutcome = StorePaywallResult;
@@ -42,8 +44,17 @@ export function SubscriptionProvider({ children, disabled = false }: { children:
   const [offerings, setOfferings] = useState<PurchasesOffering[] | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const ownerId = getCurrentUser()?.id || user?.id;
+  const entitlement = useQuery({
+    ...entitlementQueryOptions(ownerId || ''),
+    enabled: Boolean(ownerId && !disabled && !isLoading),
+  }, queryClient);
+  useEffect(() => {
+    if (!entitlement.data || entitlement.data.ownerId !== getCurrentUser()?.id) return;
+    serverState.current = entitlement.data;
+  }, [entitlement.data]);
   const customerInfo = customer.ownerId === ownerId ? customer.info : null;
-  const isSubscribed = Boolean(ownerId && (hasSubscription(customerInfo) || server.ownerId === ownerId && server.premium));
+  const serverVerification = entitlement.data && entitlement.data.ownerId === ownerId ? entitlement.data : server;
+  const isSubscribed = Boolean(ownerId && (hasSubscription(customerInfo) || serverVerification.ownerId === ownerId && serverVerification.premium));
   useEffect(() => { userRef.current = user; }, [user]);
   const publishSDK = (id: string | undefined, info: CustomerInfo) => {
     const previous = sdkState.current;
@@ -106,9 +117,10 @@ export function SubscriptionProvider({ children, disabled = false }: { children:
     return owner;
   }
   async function serverEntitlement(id: string): Promise<boolean> {
+    if (!onlineManager.isOnline()) return currentOwner()?.id === id && serverState.current.ownerId === id && serverState.current.premium;
     const version = ++serverRefreshVersion.current;
     try {
-      const response = await apiRequest<{ premium: boolean }>('/v1/entitlement');
+      const response = await queryClient.fetchQuery({ ...entitlementQueryOptions(id), staleTime: 0 });
       if (currentOwner()?.id !== id) return false;
       if (version !== serverRefreshVersion.current) return serverState.current.ownerId === id && serverState.current.premium;
       const next = { ownerId: id, premium: response.premium === true };
