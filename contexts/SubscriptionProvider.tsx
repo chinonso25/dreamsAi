@@ -89,7 +89,7 @@ export function SubscriptionProvider({ children, disabled = false }: { children:
   async function synchronizeIdentity(requireFreshSession: boolean): Promise<DreamerUser> {
     await configuration.current;
     let owner: DreamerUser | null = currentOwner();
-    if (requireFreshSession || !owner) owner = await ensureSession();
+    if (requireFreshSession || !owner) owner = await ensureSession({ force: requireFreshSession });
     if (!owner) throw new Error('Reconnect to your private journal before opening purchases.');
     const id = owner.id;
     const queued = identityQueue.current.catch(() => undefined).then(async () => {

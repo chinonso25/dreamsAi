@@ -13,7 +13,7 @@ export function createAuth(env:Env) {
     emailAndPassword:{enabled:false},
     session:{expiresIn:60*60*24*90,updateAge:60*60*24},
     rateLimit:{enabled:true,storage:'database',window:60,max:50,customRules:{'/sign-in/anonymous':{window:60,max:5},'/email-otp/send-verification-otp':{window:60,max:3},'/sign-in/email-otp':{window:60,max:6}}},
-    advanced:{useSecureCookies:env.AUTH_BASE_URL.startsWith('https://')},
+    advanced:{useSecureCookies:env.AUTH_BASE_URL.startsWith('https://'),ipAddress:{ipAddressHeaders:['cf-connecting-ip']}},
     logger:{disabled:true},
     plugins:[expo(),bearer({requireSignature:true}),anonymous({
       onLinkAccount:async ({anonymousUser,newUser})=>{
@@ -27,6 +27,9 @@ export function createAuth(env:Env) {
           env.DB.prepare("UPDATE dreams SET user_id=?,processing_status=CASE WHEN processing_status='processing' THEN 'error' ELSE processing_status END,error=CASE WHEN processing_status='processing' THEN 'Your journal was recovered. Restart processing when you are ready.' ELSE error END,lease_token=NULL,lease_until=NULL WHERE user_id=?").bind(newID,oldID),
           env.DB.prepare('INSERT INTO ai_usage(user_id,used) SELECT ?,used FROM ai_usage WHERE user_id=? ON CONFLICT(user_id) DO UPDATE SET used=used+excluded.used').bind(newID,oldID),
           env.DB.prepare('UPDATE ai_reservations SET user_id=? WHERE user_id=?').bind(newID,oldID),
+          // Existing media survives recovery even when the combined journal exceeds
+          // today's quota; future reservations enforce the combined byte total.
+          env.DB.prepare('UPDATE audio_objects SET owner_id=? WHERE owner_id=?').bind(newID,oldID),
           env.DB.prepare('DELETE FROM ai_usage WHERE user_id=?').bind(oldID)
         ]);}catch(error){
           if(error instanceof Error && error.message.includes('billing_identity_limit'))throw new AuthError('BAD_REQUEST',{message:'This account has reached its journal recovery limit. Your guest journal is preserved. Contact support to recover additional journals.'});

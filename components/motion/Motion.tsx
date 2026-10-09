@@ -26,8 +26,8 @@ export function MotionPressable({ style, onPress, onPressIn, onPressOut, childre
   return <AnimatedPressable {...props} pressRetentionOffset={props.pressRetentionOffset ?? 16}
     onPressIn={event => { setPressed(Boolean(onPress) && !props.disabled); onPressIn?.(event); }} onPressOut={event => { setPressed(false); onPressOut?.(event); }}
     onPress={event => { if (props.disabled || !onPress) return; haptic(feedback); return onPress(event); }}
-    style={[typeof style === 'function' ? style({ pressed, hovered: false }) : style, { transform: [{ scale: reduced || !pressed || props.disabled ? 1 : pressScale }], transitionProperty: ['transform', 'opacity', 'backgroundColor', 'borderColor'], transitionDuration: reduced ? 0 : 120, transitionTimingFunction: CSS_EASE_OUT }]}>
-    {typeof children === 'function' ? children({ pressed, hovered: false }) : children}
+    style={[typeof style === 'function' ? style({ pressed }) : style, { transform: [{ scale: reduced || !pressed || props.disabled ? 1 : pressScale }], transitionProperty: ['transform', 'opacity', 'backgroundColor', 'borderColor'], transitionDuration: reduced ? 0 : 120, transitionTimingFunction: CSS_EASE_OUT }]}>
+    {typeof children === 'function' ? children({ pressed }) : children}
   </AnimatedPressable>;
 }
 /** Reveal containers, never recycled list rows. */
