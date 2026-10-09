@@ -1,0 +1,19 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "thedreamer-landing",
+  "account_id": "4f05686b81d4751333496e9bb6df6606",
+  "compatibility_date": "2026-10-08",
+  "main": "src/worker.js",
+  "workers_dev": false,
+  "routes": [
+    { "pattern": "thedreamer.app", "custom_domain": true },
+    { "pattern": "www.thedreamer.app", "custom_domain": true }
+  ],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "drop-trailing-slash",
+    "not_found_handling": "404-page"
+  }
+}

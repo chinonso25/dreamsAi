@@ -1,0 +1,17 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "thedreamer-api",
+  "account_id": "4f05686b81d4751333496e9bb6df6606",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-08",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "routes": [{"pattern":"api.thedreamer.app","custom_domain":true}],
+  "d1_databases": [{"binding":"DB","database_name":"dreamer-journal","database_id":"318cbbf8-1e05-48c8-b3a8-25a88b8753c3","migrations_dir":"migrations"}],
+  "r2_buckets": [{"binding":"AUDIO","bucket_name":"dreamer-audio"}],
+  "ai": {"binding":"AI"},
+  "send_email": [{"name":"EMAIL","allowed_sender_addresses":["hello@thedreamer.app"]}],
+  "vars": {"AUTH_BASE_URL":"https://api.thedreamer.app","ALLOWED_ORIGINS":"https://thedreamer.app,https://www.thedreamer.app","EMAIL_FROM":"hello@thedreamer.app","REVENUECAT_ENTITLEMENT":"pro","REVENUECAT_PROJECT_ID":"50f990d7","REVENUECAT_ENTITLEMENT_ID":"entl647fbfef6e","FREE_AI_LIMIT":"3"},
+  "triggers":{"crons":["0 * * * *"]},
+  "observability":{"enabled":true,"logs":{"enabled":true,"invocation_logs":false},"traces":{"enabled":false}}
+}

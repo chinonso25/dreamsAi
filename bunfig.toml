@@ -1,0 +1,3 @@
+# Keep the existing Expo/React Native dependency layout across Bun versions.
+[install]
+linker = "hoisted"

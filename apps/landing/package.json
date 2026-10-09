@@ -1,0 +1,17 @@
+{
+  "name": "thedreamer-landing",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "wrangler dev --port 8788 --host localhost",
+    "check": "node scripts/check.mjs",
+    "deploy": "bun run build && bun run check && wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "4.149.0"
+  },
+  "engines": {
+    "node": "^24.0.0"
+  }
+}
