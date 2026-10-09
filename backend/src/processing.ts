@@ -4,6 +4,8 @@ import { serializeDream } from './validation';
 import { claimJob, ownedDream, rateLimit } from './database';
 import { analyseDream, assertOpenAIConfigured } from './openai';
 import { assertTranscriptionConfigured, transcribeDream } from './transcription';
+import { processingText, sourceFingerprint } from './source';
+import { reportFailure } from './diagnostics';
 export function entitlementIsActive(entitlement:{expires_date?:string|null;grace_period_expires_date?:string|null}|undefined,now=Date.now()) {
  if(!entitlement)return false;
  if(entitlement.expires_date===null)return true;
@@ -74,36 +76,44 @@ export async function processDream(env:Env,id:string,owner:string) {
  if(row.lease_until && row.lease_until>Date.now())return {dream:serializeDream(row)};
  if(!row.original_text.trim()&&!row.transcript.trim()&&!row.audio_key)throw new APIError(400,'EMPTY_DREAM','Add some text or a recording before processing.');
  assertOpenAIConfigured(env);
- if(!row.original_text.trim()&&!row.transcript.trim()&&row.audio_key)assertTranscriptionConfigured(env);
+ if(!processingText(row)&&row.audio_key)assertTranscriptionConfigured(env);
  const premium=await premiumEntitlement(env,owner);
  const limit=Math.max(0,Math.min(10,Number(env.FREE_AI_LIMIT??'3')||0));
- // Failed and interrupted attempts retain their reserved preview; the same entry never spends another preview.
- const prior=await env.DB.prepare('SELECT 1 FROM ai_reservations WHERE dream_id=? AND user_id=?').bind(id,owner).first();
+ // Retry identity follows the actual source, not a reusable entry UUID. A saved
+ // transcription remains tied to its recording, so summary retries stay free.
+ const sourceHash=await sourceFingerprint(row);
+ const prior=await env.DB.prepare(`SELECT 1 FROM ai_reservations WHERE dream_id=? AND user_id=? AND charged=1
+ AND (source_hash=? OR (source_hash='' AND legacy_source_version=?))`).bind(id,owner,sourceHash,row.source_version).first();
  if(!premium&&!prior){const usage=await env.DB.prepare('SELECT used FROM ai_usage WHERE user_id=?').bind(owner).first<{used:number}>();if((usage?.used??0)>=limit)throw new APIError(402,'PREMIUM_REQUIRED','Your free insights are used. Your journal remains available; unlock premium to add more insights.');}
  await rateLimit(env,`ai:${owner}`,10,3600);
  const token=crypto.randomUUID();if(!await claimJob(env,row,owner,token))return {dream:serializeDream(await ownedDream(env,id,owner))};
  try {
+   if(prior)await env.DB.prepare(`UPDATE ai_reservations SET source_hash=?,legacy_source_version=NULL WHERE dream_id=? AND user_id=? AND source_hash='' AND legacy_source_version=?`).bind(sourceHash,id,owner,row.source_version).run();
    if(!premium&&!prior){
      await env.DB.prepare('INSERT OR IGNORE INTO ai_usage(user_id,used) VALUES(?,0)').bind(owner).run();
      // D1 serialises transactions; reserve the counter conditionally, then verify before inference.
      const reservation=await env.DB.batch([
-       env.DB.prepare('INSERT OR IGNORE INTO ai_reservations(dream_id,user_id) SELECT ?,? WHERE (SELECT used FROM ai_usage WHERE user_id=?)<?').bind(id,owner,owner,limit),
-       env.DB.prepare('UPDATE ai_usage SET used=used+1 WHERE user_id=? AND EXISTS(SELECT 1 FROM ai_reservations WHERE dream_id=? AND user_id=? AND charged=0)').bind(owner,id,owner),
-       env.DB.prepare('UPDATE ai_reservations SET charged=1 WHERE dream_id=? AND user_id=?').bind(id,owner)
+       env.DB.prepare('INSERT OR IGNORE INTO ai_reservations(dream_id,user_id,source_hash) SELECT ?,?,? WHERE (SELECT used FROM ai_usage WHERE user_id=?)<?').bind(id,owner,sourceHash,owner,limit),
+       env.DB.prepare('UPDATE ai_usage SET used=used+1 WHERE user_id=? AND EXISTS(SELECT 1 FROM ai_reservations WHERE dream_id=? AND user_id=? AND source_hash=? AND charged=0)').bind(owner,id,owner,sourceHash),
+       env.DB.prepare('UPDATE ai_reservations SET charged=1 WHERE dream_id=? AND user_id=? AND source_hash=?').bind(id,owner,sourceHash)
      ]);
      if(reservation[0].meta.changes!==1)throw new APIError(402,'PREMIUM_REQUIRED','Your free insights are used. Your dream is saved.');
    }
-   let transcript=row.transcript.trim()||row.original_text.trim();
+   let transcript=processingText(row);
    if(!transcript && row.audio_key){
      const audio=await env.AUDIO.get(row.audio_key);if(!audio)throw new APIError(409,'AUDIO_MISSING','The recording has not finished uploading. Retry the upload first.');
      transcript=await transcribeDream(env,audio);
-     await env.DB.prepare('UPDATE dreams SET transcript=?,original_text=CASE WHEN original_text=\'\' THEN ? ELSE original_text END WHERE id=? AND user_id=? AND lease_token=? AND revision=? AND deleted_at IS NULL').bind(transcript,transcript,id,owner,token,row.revision).run();
+     const stored=await env.DB.prepare('UPDATE dreams SET transcript=?,original_text=CASE WHEN original_text=\'\' THEN ? ELSE original_text END,transcript_audio_key=audio_key WHERE id=? AND user_id=? AND lease_token=? AND revision=? AND deleted_at IS NULL').bind(transcript,transcript,id,owner,token,row.revision).run();
+     // Ownership or source may have changed while transcription ran. Stop before
+     // another billable operation when this job can no longer attach its result.
+     if(stored.meta.changes===0)return {dream:serializeDream(await ownedDream(env,id,owner))};
    }
    const insight=await analyseDream(env,transcript);
    await env.DB.prepare(`UPDATE dreams SET title=?,summary=?,tags=?,keywords=?,mood=?,processing_status='complete',error=NULL,processed_revision=revision,lease_token=NULL,lease_until=NULL
    WHERE id=? AND user_id=? AND lease_token=? AND revision=? AND deleted_at IS NULL`)
    .bind(insight.title,insight.summary,JSON.stringify(insight.tags),JSON.stringify(insight.keywords),insight.mood,id,owner,token,row.revision).run();
  }catch(error){
+   if(!(error instanceof APIError && error.status===402))reportFailure('dream_processing',error);
    const message=error instanceof APIError?error.message:'Processing was interrupted. Your dream is saved; restart processing.';
    await env.DB.prepare("UPDATE dreams SET processing_status='error',error=?,lease_token=NULL,lease_until=NULL WHERE id=? AND user_id=? AND lease_token=? AND deleted_at IS NULL").bind(message,id,owner,token).run();
    if(error instanceof APIError && error.status===402)throw error;

@@ -1,31 +1,49 @@
 import { Journal } from '@/types';
+import { localDateKey } from '@/shared/dream-contract';
+export { localDateKey } from '@/shared/dream-contract';
 
 export type SearchScope = 'all' | 'themes' | 'transcripts';
 export type DreamSort = 'newest' | 'oldest';
 export type JournalFilters = { query?: string; scope?: SearchScope; sort?: DreamSort; mood?: string; tag?: string; favorites?: boolean; date?: string; from?: string; to?: string };
 const normalized = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase();
-export function localDateKey(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+// Journal updates replace objects, so a WeakMap expires naturally when an entry changes.
+const indexes = new WeakMap<Journal, { tags?: string[]; text: Partial<Record<SearchScope, string>> }>();
+function index(dream: Journal) {
+  let cached = indexes.get(dream);
+  if (!cached) { cached = { text: {} }; indexes.set(dream, cached); }
+  return cached;
 }
 export function dreamDateKey(dream: Journal): string {
   return dream.dream_date?.slice(0, 10) || localDateKey(new Date(dream.created_at));
 }
 export function entryTags(dream: Journal): string[] {
+  const cached = index(dream);
+  if (cached.tags) return cached.tags;
   const tags = new Map<string, string>();
-  for (const tag of [...(dream.tags || []), ...(dream.keywords || [])]) if (tag.trim()) tags.set(normalized(tag.trim()), tags.get(normalized(tag.trim())) || tag.trim());
-  return [...tags.values()];
+  for (const tag of [...(dream.tags || []), ...(dream.keywords || [])]) if (tag.trim()) { const key = normalized(tag.trim()); tags.set(key, tags.get(key) || tag.trim()); }
+  cached.tags = [...tags.values()];
+  return cached.tags;
+}
+function searchableText(dream: Journal, scope: SearchScope) {
+  const cached = index(dream);
+  if (cached.text[scope] === undefined) {
+    const fields = scope === 'themes' ? entryTags(dream) : scope === 'transcripts' ? [dream.transcript, dream.original_text] : [dream.title, dream.transcript, dream.original_text, dream.summary, dream.mood, dream.location, readableDreamDate(dreamDateKey(dream)), ...entryTags(dream)];
+    cached.text[scope] = normalized(fields.filter(Boolean).join(' '));
+  }
+  return cached.text[scope]!;
 }
 export function filterDreams(entries: Journal[], filters: JournalFilters): Journal[] {
   const words = normalized(filters.query || '').trim().split(/\s+/).filter(Boolean);
+  const theme = filters.tag ? normalized(filters.tag) : undefined;
   return entries.filter(dream => {
     if (filters.favorites && !dream.is_starred) return false;
     if (filters.mood && dream.mood !== filters.mood) return false;
-    if (filters.tag && !entryTags(dream).some(tag => normalized(tag) === normalized(filters.tag!))) return false;
+    if (theme && !entryTags(dream).some(tag => normalized(tag) === theme)) return false;
     if (filters.date && dreamDateKey(dream) !== filters.date) return false;
     if (filters.from && dreamDateKey(dream) < filters.from) return false;
     if (filters.to && dreamDateKey(dream) > filters.to) return false;
-    const fields = filters.scope === 'themes' ? entryTags(dream) : filters.scope === 'transcripts' ? [dream.transcript, dream.original_text] : [dream.title, dream.transcript, dream.original_text, dream.summary, dream.mood, dream.location, readableDreamDate(dreamDateKey(dream)), ...entryTags(dream)];
-    const text = normalized(fields.filter(Boolean).join(' '));
+    if (!words.length) return true;
+    const text = searchableText(dream, filters.scope || 'all');
     return words.every(word => text.includes(word));
   }).sort((a, b) => (filters.sort === 'oldest' ? -1 : 1) * (dreamDateKey(b).localeCompare(dreamDateKey(a)) || b.created_at.localeCompare(a.created_at) || String(b.id).localeCompare(String(a.id))));
 }

@@ -2,7 +2,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View, useColorScheme } from 'react-native';
 import { saveDream } from '@/util/journal';
-import { Journal } from '@/types';
+import { legacyDreamInput } from '@/util/legacy-dream';
 
 /** Compatibility for old text-summary links. New capture saves directly to its durable entry. */
 export default function LegacySummaryScreen() {
@@ -17,10 +17,8 @@ export default function LegacySummaryScreen() {
     try {
       if (id) { router.replace({ pathname: '/Dream/[id]', params: { id } }); return; }
       if (!dreamData) { router.replace('/AddDream'); return; }
-      const input = JSON.parse(dreamData) as Partial<Journal>;
-      if (!input.transcript?.trim()) throw new Error('This old preview has no text. Return to capture to keep your dream.');
       // Preserve the old preview text, never attach an unrelated global recording.
-      const dream = await saveDream({ ...input, id: typeof input.id === 'string' ? input.id : undefined, transcript: input.transcript, original_text: input.transcript });
+      const dream = await saveDream(legacyDreamInput(dreamData));
       router.replace({ pathname: '/Dream/[id]', params: { id: String(dream.id) } });
     } catch (failure) { setError(failure instanceof Error ? failure.message : 'Could not recover this preview. Please try again.'); }
     finally { setBusy(false); }

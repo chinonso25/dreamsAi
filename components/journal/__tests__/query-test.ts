@@ -64,3 +64,17 @@ it('reveals a match buried in the transcript instead of an unrelated summary', (
   expect(preview.text.startsWith('…')).toBe(true);
   expect(dreamPreview(entry, '', 'all').text).toBe('A journey at night');
 });
+
+it('reuses search fields until an immutable journal edit replaces the entry', () => {
+  const original = dream('cached', { transcript: 'café lighthouse' });
+  expect(filterDreams([original], { query: 'CAFE' })).toHaveLength(1);
+  expect(filterDreams([original], { query: 'lighthouse' })).toHaveLength(1);
+  const edited = { ...original, transcript: 'mountain' };
+  expect(filterDreams([edited], { query: 'lighthouse' })).toEqual([]);
+  expect(filterDreams([edited], { query: 'mountain' })).toHaveLength(1);
+});
+it('does not read transcript fields for an empty search', () => {
+  const entry = dream('empty');
+  Object.defineProperty(entry, 'transcript', { get() { throw new Error('Unneeded text normalization'); } });
+  expect(filterDreams([entry], { query: '   ' }).map(item => item.id)).toEqual(['empty']);
+});

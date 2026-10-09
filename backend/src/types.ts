@@ -13,6 +13,8 @@ export interface Env {
   REVENUECAT_PROJECT_ID?: string;
   REVENUECAT_ENTITLEMENT_ID?: string;
   FREE_AI_LIMIT?: string;
+  MAX_AUDIO_BYTES_PER_OWNER?: string;
+  MAX_AUDIO_BYTES_GLOBAL?: string;
 }
 export interface DreamRow {
   id:string; user_id:string; title:string; transcript:string; original_text:string;
@@ -21,6 +23,7 @@ export interface DreamRow {
   audio_length:number; processing_status:string; error:string|null;
   revision:number; lease_token:string|null; lease_until:number|null; processed_revision:number|null;
   deleted_at:string|null;
+  source_version:number; transcript_audio_key:string|null; sync_version:number;
 }
 export class APIError extends Error {
   constructor(public status:number, public code:string, message:string,public headers:HeadersInit={}){super(message);}

@@ -48,7 +48,7 @@ async function openAIRequest(env: Env, path: string, body: BodyInit, json = fals
     if (controller.signal.aborted) throw new APIError(504, 'PROCESSING_TIMEOUT', 'Processing was interrupted. Your dream is saved; restart processing.');
     if (error instanceof APIError) throw error;
     // Fixed metadata only: never log error messages, request bodies or credentials.
-    console.error('OpenAI transport failure', { stage, errorType: error instanceof Error ? error.name : 'unknown' });
+    console.error('OpenAI transport failure', { stage, errorType: error instanceof Error ? 'transport' : 'unknown' });
     throw new APIError(503, 'AI_UNAVAILABLE', 'Dream processing was interrupted. Your dream is saved; retry processing.');
   } finally {
     clearTimeout(timer);

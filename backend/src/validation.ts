@@ -1,27 +1,29 @@
 import { z } from 'zod';
+import { DREAM_LIMITS, moods } from '../../shared/dream-contract';
 import { APIError, type DreamRow } from './types';
 export const UUID = z.uuid();
-export const moods = ['happy','anxious','neutral','excited','sad','curious','frustrated'] as const;
-const shortList = z.array(z.string().trim().min(1).max(80)).max(20);
+export { moods };
+const shortList = z.array(z.string().trim().min(1).max(DREAM_LIMITS.listItem)).max(DREAM_LIMITS.listItems);
+const timestamp=z.iso.datetime({offset:true}).refine(value=>Number.isFinite(Date.parse(value))).transform(value=>new Date(value).toISOString());
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => {
   const parsed = new Date(`${value}T00:00:00.000Z`);
   return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0,10) === value;
 });
 export const dreamInput = z.object({
-  id:UUID.optional(), title:z.string().trim().max(200).default('Untitled dream'),
-  transcript:z.string().max(50000).default(''), original_text:z.string().max(50000).optional(),
-  summary:z.string().max(10000).default(''), tags:shortList.default([]), keywords:shortList.default([]),
+  id:UUID.optional(), title:z.string().trim().max(DREAM_LIMITS.title).default('Untitled dream'),
+  transcript:z.string().max(DREAM_LIMITS.transcript).default(''), original_text:z.string().max(DREAM_LIMITS.transcript).optional(),
+  summary:z.string().max(DREAM_LIMITS.summary).default(''), tags:shortList.default([]), keywords:shortList.default([]),
   mood:z.enum(moods).default('neutral'), dream_date:date,
-  created_at:z.iso.datetime({offset:true}).optional(), updated_at:z.iso.datetime({offset:true}).optional(),
-  is_starred:z.boolean().default(false), audio_length:z.number().finite().min(0).max(1200).default(0),
-  reflection:z.string().max(10000).optional()
+  created_at:timestamp.optional(), updated_at:timestamp.optional(),
+  is_starred:z.boolean().default(false), audio_length:z.number().finite().min(0).max(DREAM_LIMITS.audioSeconds).default(0),
+  reflection:z.string().max(DREAM_LIMITS.summary).optional()
 });
 export const analysisOutput = z.object({
-  title:z.string().trim().min(1).max(200), summary:z.string().trim().min(1).max(10000),
+  title:z.string().trim().min(1).max(DREAM_LIMITS.title), summary:z.string().trim().min(1).max(DREAM_LIMITS.summary),
   tags:shortList, keywords:shortList, mood:z.enum(moods)
 });
 export function serializeDream(row:DreamRow) {
-  const {lease_token:_token,lease_until:_until,revision:_revision,processed_revision:_processed,deleted_at:_deleted,...publicRow}=row;
+  const {lease_token:_token,lease_until:_until,revision:_revision,processed_revision:_processed,deleted_at:_deleted,source_version:_source,transcript_audio_key:_transcribed,...publicRow}=row;
   return {...publicRow,tags:JSON.parse(row.tags) as string[],keywords:JSON.parse(row.keywords) as string[],is_starred:Boolean(row.is_starred)};
 }
 export async function readBytes(request:Request,limit:number):Promise<Uint8Array> {
@@ -33,7 +35,7 @@ export async function readBytes(request:Request,limit:number):Promise<Uint8Array
   finally {reader.releaseLock();}
   const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}return bytes;
 }
-export async function readJSON(request:Request,limit=200000):Promise<unknown> {
+export async function readJSON(request:Request,limit=DREAM_LIMITS.requestBytes):Promise<unknown> {
   if(!request.headers.get('content-type')?.startsWith('application/json')) throw new APIError(415,'JSON_REQUIRED','Send JSON data.');
   try{return JSON.parse(new TextDecoder().decode(await readBytes(request,limit)));}catch(error){if(error instanceof APIError)throw error;throw new APIError(400,'INVALID_JSON','The request could not be read.');}
 }
