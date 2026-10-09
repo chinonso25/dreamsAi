@@ -11,6 +11,18 @@ export const authClient = createAuthClient({
   plugins: [anonymousClient(), emailOTPClient(), ...(Platform.OS === 'web' ? [] : [expoClient({ scheme: 'dreamai', storage: SecureStore })])],
 });
 export type DreamerUser = { id: string; email?: string; name?: string; isAnonymous?: boolean | null };
+/** Missing server credentials must not replace the locally retained journal owner. */
+export class SessionRecoveryError extends Error {
+  readonly code = 'SESSION_RECOVERY_REQUIRED';
+  readonly owner: DreamerUser;
+  constructor(owner: DreamerUser) {
+    super(owner.isAnonymous === true
+      ? 'Your guest connection expired. Your saved dreams remain on this device. Reconnect this journal from Settings.'
+      : 'Sign in with your email again to reconnect this journal. Your saved dreams remain on this device.');
+    this.name = 'SessionRecoveryError';
+    this.owner = { ...owner };
+  }
+}
 let currentUser: DreamerUser | null = null;
 let pendingSession: Promise<DreamerUser> | null = null;
 let identityVersion = 0;
@@ -73,8 +85,9 @@ export async function ensureSession({ force = false }: { force?: boolean } = {})
       verifiedSession = { owner: result.data.user.id, until: Math.min(Date.now() + 60000, expiresAt) };
       return result.data.user;
     }
-    // An expired email session is recoverable. Never turn its cache into a guest's journal.
-    if (previous && previous.isAnonymous !== true) throw new Error('Sign in with your email again to reconnect this journal. Your saved dreams remain on this device.');
+    // This includes expired guests: replacing their identity would hide retained
+    // offline entries and drafts. Recovery must be an explicit account operation.
+    if (previous) { invalidateSession(); throw new SessionRecoveryError(previous); }
     const signed = await authClient.signIn.anonymous();
     if (version !== identityVersion) throw new Error('Your account changed. Try again from your current journal.');
     if (signed.error || !signed.data?.user) throw new Error('Could not connect to your private journal. You can keep saving on this device.');

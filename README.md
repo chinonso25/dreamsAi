@@ -20,7 +20,10 @@ Journal entries and capture drafts are saved on the device before network operat
 
 An expired email session requires email recovery; it never transfers that account's
 cached journal or draft to a new guest. Signing into a different email keeps each
-account's device data separate. Only a verified guest-to-email link moves guest data.
+account's device data separate. A live guest-to-email link moves guest data. An
+expired guest remains accessible locally; explicit email recovery copies retained
+entries using fresh IDs and copies recordings available on the device. Recovery
+reports unavailable recordings, and keeps the original local cache intact.
 Unreadable draft/journal storage is retained and can be retried before editing.
 
 The device journal uses per-entry storage with a resumable migration from the old

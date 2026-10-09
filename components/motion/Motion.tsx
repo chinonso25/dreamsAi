@@ -22,12 +22,13 @@ export const useMotionPreference = () => useContext(MotionContext);
 /** A single press animation and one haptic at commit; callbacks and accessibility stay native. */
 export function MotionPressable({ style, onPress, onPressIn, onPressOut, children, haptic: feedback = 'light', pressScale = .97, ...props }: PressableProps & { haptic?: HapticKind; pressScale?: number }) {
   const [pressed, setPressed] = useState(false);
+  const pressState = { pressed, hovered: false };
   const reduced = useMotionPreference();
   return <AnimatedPressable {...props} pressRetentionOffset={props.pressRetentionOffset ?? 16}
     onPressIn={event => { setPressed(Boolean(onPress) && !props.disabled); onPressIn?.(event); }} onPressOut={event => { setPressed(false); onPressOut?.(event); }}
     onPress={event => { if (props.disabled || !onPress) return; haptic(feedback); return onPress(event); }}
-    style={[typeof style === 'function' ? style({ pressed, hovered: false }) : style, { transform: [{ scale: reduced || !pressed || props.disabled ? 1 : pressScale }], transitionProperty: ['transform', 'opacity', 'backgroundColor', 'borderColor'], transitionDuration: reduced ? 0 : 120, transitionTimingFunction: CSS_EASE_OUT }]}>
-    {typeof children === 'function' ? children({ pressed, hovered: false }) : children}
+    style={[typeof style === 'function' ? style(pressState) : style, { transform: [{ scale: reduced || !pressed || props.disabled ? 1 : pressScale }], transitionProperty: ['transform', 'opacity', 'backgroundColor', 'borderColor'], transitionDuration: reduced ? 0 : 120, transitionTimingFunction: CSS_EASE_OUT }]}>
+    {typeof children === 'function' ? children(pressState) : children}
   </AnimatedPressable>;
 }
 /** Reveal containers, never recycled list rows. */

@@ -15,7 +15,7 @@ jest.mock('../journal-persistence', () => ({
   readJournal: async () => ({ entries: [], deleted: [], retiredOwners: [], cursors: {} }),
   persistJournal: jest.fn(async () => {}), waitForJournalWrites: async () => {},
 }));
-jest.mock('../journal-audio', () => ({ uploadJournalAudio: async () => undefined, removeJournalAudio: jest.fn(), managedRecording: () => true, journalAudioUri: async () => undefined }));
+jest.mock('../journal-audio', () => ({ uploadJournalAudio: async () => undefined, removeJournalAudio: jest.fn(), managedRecording: () => true, journalAudioUri: async () => undefined, cancelJournalAudio: jest.fn(), recoverJournalAudio: async () => ({}) }));
 
 const api = jest.mocked(apiRequest) as unknown as jest.Mock<(...args: unknown[]) => Promise<unknown>>;
 const sample = (patch: Partial<Journal> = {}): Journal => ({

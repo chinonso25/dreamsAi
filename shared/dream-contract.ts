@@ -56,11 +56,14 @@ export function validateDreamInput(input: SaveDreamInput | EditDreamPatch): void
   if (value.audio_length !== undefined && (typeof value.audio_length !== 'number' || !Number.isFinite(value.audio_length) || value.audio_length < 0 || value.audio_length > DREAM_LIMITS.audioSeconds)) throw new Error('Recordings must be no longer than 20 minutes.');
   for (const key of ['created_at', 'updated_at'] as const) if (value[key] !== undefined && (typeof value[key] !== 'string' || !Number.isFinite(Date.parse(value[key])))) throw new Error('The entry timestamp could not be read.');
   // JSON escaping can exceed the body cap even when individual text fields fit.
-  let bytes = 0;
-  for (const character of JSON.stringify(input)) {
-    const point = character.codePointAt(0)!;
-    bytes += point <= 0x7f ? 1 : point <= 0x7ff ? 2 : point <= 0xffff ? 3 : 4;
-    if (bytes > DREAM_LIMITS.requestBytes) throw new Error('This entry is too large to sync. Keep its text in shorter entries before syncing.');
+  const encoded = JSON.stringify(input);
+  if (encoded.length * 3 > DREAM_LIMITS.requestBytes) {
+    let bytes = 0;
+    for (const character of encoded) {
+      const point = character.codePointAt(0)!;
+      bytes += point <= 0x7f ? 1 : point <= 0x7ff ? 2 : point <= 0xffff ? 3 : 4;
+      if (bytes > DREAM_LIMITS.requestBytes) throw new Error('This entry is too large to sync. Keep its text in shorter entries before syncing.');
+    }
   }
 }
 export function toSaveDreamInput(entry: LocalDream): SaveDreamInput {

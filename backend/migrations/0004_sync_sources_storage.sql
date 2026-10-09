@@ -3,6 +3,9 @@
 ALTER TABLE dreams ADD COLUMN source_version INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE dreams ADD COLUMN transcript_audio_key TEXT;
 ALTER TABLE dreams ADD COLUMN sync_version INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE audio_cleanup ADD COLUMN cleanup_token TEXT;
+ALTER TABLE audio_cleanup ADD COLUMN cleanup_until INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX audio_cleanup_due ON audio_cleanup(not_before,cleanup_until);
 UPDATE dreams SET created_at=strftime('%Y-%m-%dT%H:%M:%fZ',created_at),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ',updated_at);
 UPDATE dreams SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE updated_at>strftime('%Y-%m-%dT%H:%M:%fZ','now','+5 minutes');
 -- A legacy voice transcript belongs to its original recording, not a new text preview.

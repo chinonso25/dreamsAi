@@ -3,18 +3,19 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { fetch as expoFetch } from 'expo/fetch';
 import { apiRequest } from '../api';
 import { completeDraft, updateDraft, useCaptureDraft } from '../drafts';
-import { beginAccountDeletion, clearDeletedAccountJournal, saveDream, updateDream, deleteDream, refreshDreams, hydrateJournal, requestDreamProcessing, retryDream, syncJournal, useJournalStore, invalidateJournalRequests, rebindJournalOwner } from '../journal';
+import { beginAccountDeletion, clearDeletedAccountJournal, saveDream, updateDream, deleteDream, refreshDreams, hydrateJournal, requestDreamProcessing, retryDream, syncJournal, useJournalStore, invalidateJournalRequests, rebindJournalOwner, recoverExpiredGuestJournal } from '../journal';
 import type { Journal } from '@/types';
+import { onlineManager } from '@tanstack/react-query';
 import { queryClient } from '../query-client';
 
 jest.mock('@react-native-async-storage/async-storage', () => ({ getItem: jest.fn<() => Promise<string | null>>(), setItem: jest.fn<() => Promise<void>>(), removeItem: jest.fn<() => Promise<void>>(), getAllKeys: jest.fn<() => Promise<string[]>>(), multiGet: jest.fn<() => Promise<[string, string | null][]>>() }));
-jest.mock('expo-crypto', () => ({ randomUUID: () => 'new-id', CryptoDigestAlgorithm: { SHA256: 'sha256' }, digestStringAsync: async (_algorithm: string, value: string) => require('crypto').createHash('sha256').update(value).digest('hex') }));
-let mockJournalOwner = 'guest-a';
+jest.mock('expo-crypto', () => ({ randomUUID: () => 'new-id', CryptoDigestAlgorithm: { SHA256: 'sha256' }, digestStringAsync: async (_algorithm: string, value: string) => jest.requireActual<typeof import('node:crypto')>('node:crypto').createHash('sha256').update(value).digest('hex') }));
+let mockJournalOwner: string | undefined = 'guest-a';
 const mockDeleteFile = jest.fn();
 jest.mock('expo-file-system', () => ({ File: class { exists = true; size = 1000; type = 'audio/mp4'; uri: string; constructor(...parts: unknown[]) { this.uri = parts.join('/'); } delete() { mockDeleteFile(this.uri); } }, Paths: { cache: 'file:///cache/' } }));
 jest.mock('expo-file-system/legacy', () => ({ documentDirectory: 'file:///documents/' }));
 jest.mock('expo/fetch', () => ({ fetch: jest.fn<typeof fetch>() }));
-jest.mock('../auth-client', () => ({ API_URL: 'https://thedreamer.app', authenticatedHeaders: async () => ({ Authorization: 'session' }), getCurrentUser: () => ({ id: mockJournalOwner }) }));
+jest.mock('../auth-client', () => ({ API_URL: 'https://thedreamer.app', authenticatedHeaders: async () => ({ Authorization: 'session' }), getCurrentUser: () => mockJournalOwner ? { id: mockJournalOwner } : null }));
 jest.mock('../api', () => ({ apiRequest: jest.fn<(...args: unknown[]) => Promise<unknown>>(), ApiError: class ApiError extends Error { status: number; constructor(message: string, status: number) { super(message); this.status = status; } } }));
 const api = jest.mocked(apiRequest) as unknown as jest.Mock<(...args: unknown[]) => Promise<unknown>>;
 const sample = (changes: Partial<Journal> = {}): Journal => ({ id: 'dream-a', user_id: 'guest-a', transcript: 'Flying over the water', original_text: 'Flying over the water', dream_date: '2026-10-08', created_at: '2026-10-08T01:00:00.000Z', updated_at: '2026-10-08T01:00:00.000Z', sync_status: 'synced', processing_status: 'idle', ...changes });
@@ -24,8 +25,8 @@ function resolveSave(path: unknown, options: unknown) {
 }
 async function until(check: () => boolean) { for (let index = 0; index < 40; index++) { if (check()) return; await Promise.resolve(); } throw new Error('Expected async boundary was not reached'); }
 beforeEach(async () => {
-  queryClient.setQueryDefaults(['account'], { gcTime: Infinity });
-  queryClient.clear();
+  queryClient.setQueryDefaults(['account'], { gcTime: Infinity, retry: false });
+  queryClient.clear(); onlineManager.setOnline(true); invalidateJournalRequests();
   mockJournalOwner = 'guest-a';
   jest.mocked(AsyncStorage.getItem).mockResolvedValue(null); jest.mocked(AsyncStorage.setItem).mockResolvedValue(undefined); jest.mocked(AsyncStorage.removeItem).mockResolvedValue(undefined); jest.mocked(AsyncStorage.getAllKeys).mockResolvedValue([]); jest.mocked(AsyncStorage.multiGet).mockResolvedValue([]);
   await hydrateJournal(); await syncJournal();
@@ -210,6 +211,8 @@ it('rejects delayed requests after an account change, including returning to the
   api.mockImplementation(() => new Promise(resolve => { finishGet = resolve; }));
   const refreshing = refreshDreams(); await until(() => Boolean(finishGet));
   mockJournalOwner = 'guest-b'; invalidateJournalRequests();
+  queryClient.setQueryDefaults(['account'], { gcTime: Infinity, retry: false });
+  queryClient.clear(); onlineManager.setOnline(true); invalidateJournalRequests();
   mockJournalOwner = 'guest-a'; invalidateJournalRequests();
   finishGet({ dreams: [sample({ transcript: 'Stale session result' })], deleted: [], next_cursor: null, sync_cursor: '2' }); await refreshing;
   expect(useJournalStore.getState().entries[0].transcript).toBe('Flying over the water');
@@ -259,4 +262,103 @@ it('sends only writable API fields instead of local URIs and sync state', async 
   const put = api.mock.calls.find(call => (call[1] as RequestInit)?.method === 'PUT')!;
   const input = JSON.parse((put[1] as RequestInit).body as string);
   expect(input.local_audio_uri).toBeUndefined(); expect(input.user_id).toBeUndefined(); expect(input.sync_status).toBeUndefined(); expect(input.processing_status).toBeUndefined();
+});
+
+it('cleans device-only recordings after durable deletion without creating a cloud session', async () => {
+  mockJournalOwner = undefined;
+  useJournalStore.setState({ entries: [sample({ user_id: 'device', local_audio_uri: 'file:///documents/dreamer-recordings/local-only.m4a' })] });
+  await deleteDream('dream-a'); await syncJournal();
+  expect(mockDeleteFile).toHaveBeenCalledWith('file:///documents/dreamer-recordings/local-only.m4a');
+  expect(useJournalStore.getState().deleted[0]).toMatchObject({ user_id: 'device', cleanupPending: false });
+  expect(api).not.toHaveBeenCalled();
+});
+it('rejects overlarge UTF8 payloads before saving and preserves the current entry on invalid edit', async () => {
+  const text = '\u0001'.repeat(50_000);
+  await expect(saveDream({ transcript: text, original_text: text, summary: '你'.repeat(10_000), reflection: '你'.repeat(10_000), tags: Array(20).fill('你'.repeat(80)), keywords: Array(20).fill('你'.repeat(80)) })).rejects.toThrow('too large');
+  expect(useJournalStore.getState().entries).toHaveLength(0); expect(api).not.toHaveBeenCalled();
+  useJournalStore.setState({ entries: [sample()] }); await expect(updateDream('dream-a', { transcript: 'x'.repeat(50_001) })).rejects.toThrow('50,000');
+  expect(useJournalStore.getState().entries[0].transcript).toBe('Flying over the water');
+});
+it('never advances a changes checkpoint when persisting its records fails', async () => {
+  api.mockResolvedValue({ dreams: [sample({ id: 'cloud-a' })], deleted: [], next_cursor: null, sync_cursor: '8' });
+  jest.mocked(AsyncStorage.setItem).mockRejectedValueOnce(new Error('Storage interrupted'));
+  await refreshDreams(); expect(useJournalStore.getState().cursors['guest-a']).toBeUndefined();
+  expect(useJournalStore.getState().error).toBe('Storage interrupted');
+  await refreshDreams(); expect(useJournalStore.getState().cursors['guest-a']).toBe('8'); expect(useJournalStore.getState().entries[0].id).toBe('cloud-a');
+});
+it('recovers unsynced future capture timestamps after the device clock is corrected', async () => {
+  useJournalStore.setState({ entries: [sample({ created_at: '2036-01-01T00:00:00.000Z', updated_at: '2036-01-01T00:00:00.000Z', sync_status: 'local' })] });
+  const started = Date.now(); await syncJournal();
+  const uploaded = JSON.parse((api.mock.calls[0][1] as RequestInit).body as string);
+  expect(Date.parse(uploaded.created_at)).toBeGreaterThanOrEqual(started); expect(Date.parse(uploaded.created_at)).toBeLessThanOrEqual(Date.now());
+  expect(Date.parse(uploaded.updated_at)).toBeLessThanOrEqual(Date.now());
+  expect(useJournalStore.getState().entries[0]).toMatchObject({ transcript: 'Flying over the water', sync_status: 'synced', dream_date: '2026-10-08' });
+});
+it('recovers expired guest content using fresh identities without mutating the guest journal', async () => {
+  const original = sample({ id: 'guest-cloud-id', user_id: 'expired-guest', audio_key: 'expired-guest/private-object', audio_url: 'https://old.example/private', sync_version: 7, local_audio_uri: 'file:///documents/dreamer-recordings/guest.m4a', summary: 'Original summary', processing_status: 'error', last_error: 'Expired' });
+  const oldTombstone = { id: 'deleted-guest-dream', user_id: 'expired-guest', synced: true };
+  useJournalStore.setState({ entries: [original], deleted: [oldTombstone] });
+  await recoverExpiredGuestJournal('expired-guest', 'guest-a');
+  const clone = useJournalStore.getState().entries.find(entry => entry.user_id === 'guest-a')!;
+  expect(clone.id).toBe('new-id'); expect(clone.id).not.toBe(original.id);
+  expect(clone).toMatchObject({ transcript: original.transcript, summary: 'Original summary', dream_date: original.dream_date, local_audio_uri: original.local_audio_uri, sync_status: 'local', processing_status: 'idle' });
+  expect(clone.audio_key).toBeUndefined(); expect(clone.audio_url).toBeUndefined(); expect(clone.sync_version).toBeUndefined(); expect(clone.last_error).toBeUndefined();
+  expect(useJournalStore.getState().entries.find(entry => entry.user_id === 'expired-guest')).toBe(original); expect(useJournalStore.getState().deleted).toEqual([oldTombstone]);
+  expect(api).not.toHaveBeenCalled(); expect(mockDeleteFile).not.toHaveBeenCalled();
+  await recoverExpiredGuestJournal('expired-guest', 'guest-a'); expect(useJournalStore.getState().entries.filter(entry => entry.user_id === 'guest-a')).toHaveLength(1);
+});
+it('recovery refuses a destination that is not the currently verified owner', async () => {
+  const original = sample({ user_id: 'expired-guest' }); useJournalStore.setState({ entries: [original] });
+  await expect(recoverExpiredGuestJournal('expired-guest', 'someone-else')).rejects.toThrow('account changed'); expect(useJournalStore.getState().entries).toEqual([original]); expect(AsyncStorage.setItem).not.toHaveBeenCalled();
+});
+it('a failed recovery preserves originals and retries the same clone instead of duplicating it', async () => {
+  const original = sample({ user_id: 'expired-guest', local_audio_uri: 'file:///documents/private.m4a', audio_key: 'old-object' }); useJournalStore.setState({ entries: [original] });
+  const audio = jest.spyOn(jest.requireActual<typeof import('../journal-audio')>('../journal-audio'), 'recoverJournalAudio').mockResolvedValue({ missing: true });
+  try {
+    jest.mocked(AsyncStorage.setItem).mockRejectedValueOnce(new Error('Recovery storage interrupted'));
+    await expect(recoverExpiredGuestJournal('expired-guest', 'guest-a')).rejects.toThrow('Recovery storage interrupted');
+    expect(useJournalStore.getState().entries.find(entry => entry.user_id === 'expired-guest')).toBe(original);
+    expect(await recoverExpiredGuestJournal('expired-guest', 'guest-a')).toEqual({ missingAudio: 1 });
+    const clones = useJournalStore.getState().entries.filter(entry => entry.user_id === 'guest-a'); expect(clones).toHaveLength(1); expect(clones[0].local_audio_uri).toBeUndefined(); expect(clones[0].audio_key).toBeUndefined(); expect(mockDeleteFile).not.toHaveBeenCalled();
+  } finally { audio.mockRestore(); }
+});
+it('deleting a recovered dream preserves shared original audio and prevents repeated recovery', async () => {
+  const original = sample({ user_id: 'expired-guest', local_audio_uri: 'file:///documents/dreamer-recordings/shared-guest.m4a' }); useJournalStore.setState({ entries: [original] });
+  await recoverExpiredGuestJournal('expired-guest', 'guest-a'); const clone = useJournalStore.getState().entries.find(entry => entry.user_id === 'guest-a')!;
+  await deleteDream(clone.id); await syncJournal(); expect(mockDeleteFile).not.toHaveBeenCalledWith(original.local_audio_uri);
+  await recoverExpiredGuestJournal('expired-guest', 'guest-a'); expect(useJournalStore.getState().entries.filter(entry => entry.user_id === 'guest-a')).toHaveLength(0); expect(useJournalStore.getState().entries[0]).toBe(original);
+});
+
+it('counts missing old recordings and preserves voice-only sources without creating blank recovered entries', async () => {
+  const voice = sample({ id: 'voice-only', user_id: 'expired-guest', transcript: '', original_text: '', summary: undefined, audio_key: 'expired-guest/voice' });
+  const written = sample({ id: 'written-recording', user_id: 'expired-guest', audio_key: 'expired-guest/recording' });
+  useJournalStore.setState({ entries: [voice, written] });
+  // The basic File fixture has an existing cache; make its zero size represent an unavailable recording.
+  const audio = jest.spyOn(jest.requireActual<typeof import('../journal-audio')>('../journal-audio'), 'recoverJournalAudio').mockResolvedValue({ missing: true });
+  try {
+    expect(await recoverExpiredGuestJournal('expired-guest', 'guest-a')).toEqual({ missingAudio: 2 });
+    const clones = useJournalStore.getState().entries.filter(entry => entry.user_id === 'guest-a'); expect(clones).toHaveLength(1); expect(clones[0].transcript).toBe(written.transcript); expect(clones[0].audio_key).toBeUndefined();
+    expect(useJournalStore.getState().entries.find(entry => entry.id === 'voice-only')).toBe(voice); expect(useJournalStore.getState().entries.find(entry => entry.id === 'written-recording')).toBe(written);
+  } finally { audio.mockRestore(); }
+});
+it('keeps unsynced edits and recordings when another device deleted the remote dream, including after restart', async () => {
+  const audio = 'file:///documents/dreamer-recordings/unsynced-words.m4a';
+  useJournalStore.setState({ entries: [sample({ transcript: 'My private unsynced correction', sync_status: 'local', local_audio_uri: audio })] });
+  api.mockImplementation((path, options) => (options as RequestInit)?.method === 'PUT'
+    ? Promise.reject(Object.assign(new Error('This dream was deleted. Save a new entry instead.'), { status: 409 }))
+    : Promise.resolve({ dreams: [], deleted: [{ id: 'dream-a', user_id: 'guest-a', deleted_at: '2026-10-09T01:00:00.000Z', sync_version: 9 }], next_cursor: null, sync_cursor: '9' }));
+  await refreshDreams();
+  const conflict = useJournalStore.getState().entries[0];
+  expect(conflict).toMatchObject({ transcript: 'My private unsynced correction', sync_status: 'error', local_audio_uri: audio });
+  expect(conflict.last_error).toBe('This dream was deleted on another device. Your unsynced changes are kept here. Copy them into a new entry to sync again.');
+  expect(useJournalStore.getState().deleted).toHaveLength(0); expect(useJournalStore.getState().cursors['guest-a']).toBe('9'); expect(mockDeleteFile).not.toHaveBeenCalled();
+  const attempts = api.mock.calls.filter(call => (call[1] as RequestInit)?.method === 'PUT').length;
+  await syncJournal(); expect(api.mock.calls.filter(call => (call[1] as RequestInit)?.method === 'PUT')).toHaveLength(attempts);
+  await expect(retryDream('dream-a')).rejects.toThrow('Copy them into a new entry');
+  const disk = new Map(jest.mocked(AsyncStorage.setItem).mock.calls.map(([key, value]) => [key, value]));
+  jest.mocked(AsyncStorage.getItem).mockImplementation(async key => disk.get(key) ?? null);
+  jest.mocked(AsyncStorage.getAllKeys).mockResolvedValue([...disk.keys()]);
+  jest.mocked(AsyncStorage.multiGet).mockImplementation(async keys => keys.map(key => [key, disk.get(key) ?? null]));
+  let persistence!: typeof import('../journal-persistence'); jest.isolateModules(() => { persistence = jest.requireActual('../journal-persistence'); });
+  const restored = await persistence.readJournal(); expect(restored.entries.find(entry => entry.id === 'dream-a')).toMatchObject({ transcript: conflict.transcript, local_audio_uri: audio, sync_status: 'error', last_error: conflict.last_error });
 });

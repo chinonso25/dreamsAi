@@ -57,14 +57,20 @@ export async function claimJob(env:Env,row:DreamRow,owner:string,token:string) {
  return result.meta.changes>0;
 }
 export async function cleanAudio(env:Env) {
- const entries=await env.DB.prepare('SELECT audio_key FROM audio_cleanup WHERE not_before<=? LIMIT 100').bind(Date.now()).all<{audio_key:string}>();
- for(const entry of entries.results){try{
+ const entries=await env.DB.prepare('SELECT audio_key FROM audio_cleanup WHERE not_before<=? AND cleanup_until<=? ORDER BY not_before LIMIT 100').bind(Date.now(),Date.now()).all<{audio_key:string}>();
+ for(const entry of entries.results){const token=crypto.randomUUID();try{
+ // Recheck the delay when claiming: the initial SELECT may predate a new upload
+ // reservation. Uploads cannot renew a key while this deletion owns its lease.
+ const claimed=await env.DB.prepare('UPDATE audio_cleanup SET cleanup_token=?,cleanup_until=? WHERE audio_key=? AND not_before<=? AND cleanup_until<=?').bind(token,Date.now()+3600000,entry.audio_key,Date.now(),Date.now()).run();
+ if(claimed.meta.changes===0)continue;
  const active=await env.DB.prepare('SELECT 1 FROM dreams WHERE audio_key=? AND deleted_at IS NULL').bind(entry.audio_key).first();
- if(active){await env.DB.prepare('DELETE FROM audio_cleanup WHERE audio_key=?').bind(entry.audio_key).run();continue;}
+ if(active){await env.DB.prepare('DELETE FROM audio_cleanup WHERE audio_key=? AND cleanup_token=?').bind(entry.audio_key,token).run();continue;}
  await env.AUDIO.delete(entry.audio_key);await env.DB.batch([
- env.DB.prepare('DELETE FROM audio_objects WHERE audio_key=?').bind(entry.audio_key),
- env.DB.prepare('DELETE FROM audio_cleanup WHERE audio_key=?').bind(entry.audio_key)
- ]);}catch(error){reportFailure('audio_cleanup',error);/* Keep the charge and cleanup record until removal succeeds. */}}
+ env.DB.prepare('DELETE FROM audio_objects WHERE audio_key=? AND EXISTS(SELECT 1 FROM audio_cleanup WHERE audio_key=? AND cleanup_token=?)').bind(entry.audio_key,entry.audio_key,token),
+ env.DB.prepare('DELETE FROM audio_cleanup WHERE audio_key=? AND cleanup_token=?').bind(entry.audio_key,token)
+ ]);}catch(error){reportFailure('audio_cleanup',error);/* Keep the charge and cleanup record until removal succeeds. */
+ try{await env.DB.prepare('UPDATE audio_cleanup SET cleanup_token=NULL,cleanup_until=0 WHERE audio_key=? AND cleanup_token=?').bind(entry.audio_key,token).run();}catch(releaseError){reportFailure('audio_cleanup_release',releaseError);}
+ }}
 }
 export async function deleteDream(env:Env,id:string,owner:string) {
  const row=await ownedDream(env,id,owner,true);if(row.deleted_at)return;

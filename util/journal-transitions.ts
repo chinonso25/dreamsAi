@@ -1,7 +1,11 @@
 import type { Journal } from '@/types';
 
 export function nextRevision(previous?: string) {
-  return new Date(Math.max(Date.now(), previous ? Date.parse(previous) + 1 || 0 : 0)).toISOString();
+  const now = Date.now();
+  const prior = previous ? Date.parse(previous) : 0;
+  // A corrected device clock must not perpetuate a bad future timestamp.
+  const previousRevision = Number.isFinite(prior) && prior <= now + 5 * 60_000 ? prior + 1 : 0;
+  return new Date(Math.max(now, previousRevision)).toISOString();
 }
 export function editDream(entry: Journal, patch: Partial<Journal>): Journal {
   const changed = ['transcript', 'title', 'tags', 'keywords', 'mood', 'original_text'].some(key => key in patch && JSON.stringify(patch[key as keyof Journal]) !== JSON.stringify(entry[key as keyof Journal]));
@@ -18,4 +22,14 @@ export function isOlderRemote(local: Journal, remote: Journal) {
 export function mergeRemote(local: Journal | undefined, remote: Journal, preservePending = false): Journal | undefined {
   if (local && (local.user_id !== remote.user_id || isOlderRemote(local, remote))) return local;
   return { ...local, ...remote, local_audio_uri: local?.local_audio_uri, sync_status: 'synced', processing_status: preservePending && local && ['pending', 'processing'].includes(local.processing_status) && remote.processing_status === 'idle' ? local.processing_status : remote.processing_status, last_error: remote.last_error };
+}
+
+export function normalizeDreamClock(entry: Journal): Journal {
+  const now = Date.now();
+  const limit = now + 5 * 60_000;
+  const futureCreated = Date.parse(entry.created_at) > limit;
+  const futureUpdated = entry.updated_at !== undefined && Date.parse(entry.updated_at) > limit;
+  if (!futureCreated && !futureUpdated) return entry;
+  const corrected = new Date(now).toISOString();
+  return { ...entry, created_at: futureCreated ? corrected : entry.created_at, updated_at: futureUpdated ? corrected : entry.updated_at };
 }

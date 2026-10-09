@@ -3,13 +3,14 @@ import * as Crypto from 'expo-crypto';
 import type { Journal } from '@/types';
 import { apiRequest, ApiError } from './api';
 import { getCurrentUser } from './auth-client';
-import { parseDreamResponse, parseDreamListResponse, parseDreamSyncResponse, toSaveDreamInput, validateDreamInput, type DreamDTO, type DreamListResponse, type DreamDeletionDTO } from '../shared/dream-contract';
-import { persistJournal, readJournal, waitForJournalWrites, type JournalDeletion } from './journal-persistence';
-import { nextRevision, editDream, mergeRemote } from './journal-transitions';
-import { journalAudioUri, uploadJournalAudio, removeJournalAudio, managedRecording } from './journal-audio';
 import { onlineManager, queryOptions } from '@tanstack/react-query';
 import { clearAccountQueries, journalQueryKey, queryClient } from './query-client';
+import { parseDreamResponse, parseDreamListResponse, parseDreamSyncResponse, toSaveDreamInput, validateDreamInput, type DreamDTO, type DreamListResponse, type DreamDeletionDTO, type SaveDreamInput, type EditDreamPatch, localDateKey } from '../shared/dream-contract';
+import { persistJournal, readJournal, waitForJournalWrites, type JournalDeletion } from './journal-persistence';
+import { nextRevision, editDream, mergeRemote, normalizeDreamClock } from './journal-transitions';
+import { journalAudioUri, uploadJournalAudio, removeJournalAudio, managedRecording, cancelJournalAudio, recoverJournalAudio } from './journal-audio';
 
+type RecoveredJournal = Journal & { recovery_source?: string };
 type State = { entries: Journal[]; deleted: JournalDeletion[]; retiredOwners: string[]; cursors: Record<string, string>; hydrated: boolean; syncing: boolean; error?: string };
 export const useJournalStore = create<State>(() => ({ entries: [], deleted: [], retiredOwners: [], cursors: {}, hydrated: false, syncing: false }));
 let hydration: Promise<void> | undefined;
@@ -23,18 +24,19 @@ function accessible(owner: string) { return !ownerBlocked(owner) && (owner === '
 function canSyncOwner(owner: string) { return owner !== 'device' && accessible(owner); }
 function validRequest(owner: string, token: number) { return generation === token && canSyncOwner(owner); }
 export function invalidateJournalRequests() {
-  generation++; syncRequested = false;
+  generation++; syncRequested = false; cancelJournalAudio();
   void queryClient.cancelQueries({ queryKey: ['account'] });
   void queryClient.invalidateQueries({ queryKey: ['account'], refetchType: 'none' });
   const owner = getCurrentUser()?.id;
   queryClient.removeQueries({ predicate: query => query.queryKey[0] === 'account' && query.queryKey[1] !== owner });
 }
-export function localDate(date = new Date()) { return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`; }
+export const localDate = localDateKey;
 const message = (e: unknown) => {
   if (!(e instanceof Error)) return 'Could not sync. Your dream is saved on this device.';
   if (/failed to fetch|network request failed|networkerror|load failed/i.test(e.message)) return 'You’re offline or the connection was interrupted. Your dream is saved on this device; reconnect and tap Retry.';
   return e.message;
 };
+const deletedConflict = 'This dream was deleted on another device. Your unsynced changes are kept here. Copy them into a new entry to sync again.';
 const interrupted = 'Processing was interrupted. Your dream is saved; tap Restart to begin again.';
 function remoteDream(remote: DreamDTO): Journal {
   const { error, ...entry } = remote;
@@ -61,7 +63,7 @@ function requireEntry(id: string) {
   if (!entry || !accessible(entry.user_id)) throw new Error('This dream is not available in your current journal.');
   return entry;
 }
-export async function saveDream(input: Partial<Journal> & { transcript: string }): Promise<Journal> {
+export async function saveDream(input: SaveDreamInput & { local_audio_uri?: string; processing_status?: 'idle' }): Promise<Journal> {
   await hydrateJournal();
   if (ownerBlocked(getCurrentUser()?.id || 'device')) throw new Error('Account deletion is in progress. Wait for it to finish before saving another dream.');
   if (!input.transcript.trim() && !input.local_audio_uri) throw new Error('Add a few words or a recording before saving.');
@@ -70,7 +72,8 @@ export async function saveDream(input: Partial<Journal> & { transcript: string }
   const prior = currentEntry(input.id || '');
   if (prior && !accessible(prior.user_id)) throw new Error('This dream belongs to another journal.');
   const now = new Date().toISOString();
-  const entry: Journal = { ...prior, ...input, id: input.id || Crypto.randomUUID(), user_id: getCurrentUser()?.id || prior?.user_id || 'device', transcript: input.transcript.trim(), original_text: input.original_text ?? prior?.original_text ?? input.transcript.trim(), title: input.title?.trim() || (input.transcript.trim().slice(0, 60) || 'A voice dream'), dream_date: input.dream_date || localDate(), created_at: prior?.created_at || input.created_at || now, updated_at: nextRevision(prior?.updated_at), sync_status: 'local', processing_status: input.processing_status || 'idle' };
+  const entry: Journal = normalizeDreamClock({ ...prior, ...input, id: input.id || Crypto.randomUUID(), user_id: getCurrentUser()?.id || prior?.user_id || 'device', transcript: input.transcript.trim(), original_text: input.original_text ?? prior?.original_text ?? input.transcript.trim(), title: input.title?.trim() || (input.transcript.trim().slice(0, 60) || 'A voice dream'), dream_date: input.dream_date || localDate(), created_at: prior?.created_at || input.created_at || now, updated_at: nextRevision(prior?.updated_at), sync_status: 'local', processing_status: input.processing_status || 'idle' });
+  validateDreamInput(toSaveDreamInput(entry));
   // Persistence must succeed before capture clears its draft or navigates.
   useJournalStore.setState(state => ({ entries: [entry, ...state.entries.filter(item => item.id !== entry.id)] }));
   await persist();
@@ -78,30 +81,36 @@ export async function saveDream(input: Partial<Journal> & { transcript: string }
   void syncJournal();
   return entry;
 }
-export async function updateDream(id: string, patch: Partial<Journal>) {
+export async function updateDream(id: string, patch: EditDreamPatch) {
   await hydrateJournal();
   const entry = requireEntry(id);
-  validateDreamInput(patch);
-  replace(editDream(entry, patch));
+  const allowed = ['title', 'transcript', 'original_text', 'dream_date', 'summary', 'tags', 'keywords', 'mood', 'audio_length', 'is_starred', 'reflection'];
+  const input = Object.fromEntries(Object.entries(patch).filter(([key]) => allowed.includes(key))) as EditDreamPatch;
+  validateDreamInput(input);
+  const next = editDream(entry, input);
+  validateDreamInput(toSaveDreamInput(next));
+  replace(next);
   await persist(); markCloudJournalStale(entry.user_id); void syncJournal();
 }
 export async function deleteDream(id: string) {
   await hydrateJournal();
   const entry = requireEntry(id);
-  useJournalStore.setState(state => ({ entries: state.entries.filter(item => item.id !== id), deleted: [...state.deleted.filter(item => item.id !== id), { id, user_id: entry.user_id, local_audio_uri: entry.local_audio_uri, cleanupPending: true }] }));
+  useJournalStore.setState(state => ({ entries: state.entries.filter(item => item.id !== id), deleted: [...state.deleted.filter(item => item.id !== id), { id, user_id: entry.user_id, local_audio_uri: entry.local_audio_uri, recovery_source: (entry as RecoveredJournal).recovery_source, cleanupPending: true }] }));
   await persist(); markCloudJournalStale(entry.user_id); void syncJournal();
 }
 async function syncEntry(id: string, owner: string, token: number) {
-  const entry = currentEntry(id, owner);
-  if (!entry || !validRequest(owner, token) || entry.sync_status === 'synced') return;
+  const queued = currentEntry(id, owner);
+  if (!queued || !validRequest(owner, token) || queued.sync_status === 'synced') return;
+  const entry = normalizeDreamClock(queued);
   const revision = entry.updated_at;
   replace({ ...entry, sync_status: 'syncing', last_error: undefined });
   try {
     const response = parseDreamResponse(await apiRequest(`/v1/dreams/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(toSaveDreamInput(entry)), expectedOwner: owner }));
-    if (!validRequest(owner, token) || response.dream.user_id !== owner || response.dream.id !== id) return;
+    if (!validRequest(owner, token)) return;
+    if (response.dream.user_id !== owner || response.dream.id !== id) throw new Error('The response belongs to another journal. Please reconnect.');
     const result = remoteDream(response.dream);
     if (!currentEntry(id, owner)) return;
-    const audioKey = await uploadJournalAudio({ ...entry, audio_key: result.audio_key || entry.audio_key }, () => validRequest(owner, token) && Boolean(currentEntry(id, owner)));
+    const audioKey = await uploadJournalAudio({ ...entry, audio_key: result.audio_key || entry.audio_key }, () => validRequest(owner, token) && currentEntry(id, owner)?.local_audio_uri === entry.local_audio_uri);
     const current = currentEntry(id, owner);
     if (!current || !validRequest(owner, token)) return;
     if (current.updated_at !== revision) { if (audioKey) replace({ ...current, audio_key: audioKey }); return; }
@@ -116,27 +125,36 @@ async function syncEntry(id: string, owner: string, token: number) {
     await persist();
   }
 }
+async function cleanupTombstone(tombstone: JournalDeletion) {
+  const protectedFiles = new Set([...useJournalStore.getState().entries, ...useJournalStore.getState().deleted.filter(item => item.id !== tombstone.id || item.user_id !== tombstone.user_id)].map(item => item.local_audio_uri).filter((uri): uri is string => Boolean(uri)));
+  await removeJournalAudio(tombstone, protectedFiles);
+  useJournalStore.setState(state => ({ deleted: state.deleted.map(item => item.id === tombstone.id && item.user_id === tombstone.user_id ? { ...item, local_audio_uri: undefined, cleanupPending: false } : item) }));
+  await persist();
+}
 export async function syncJournal() {
-  if (!onlineManager.isOnline()) return;
   if (flush) { syncRequested = true; return flush; }
   const owner = getCurrentUser()?.id;
   const token = generation;
   flush = (async () => {
     await hydrateJournal();
-    if (!owner || !validRequest(owner, token)) return;
+    // Device-only deletion never needs a session or a network connection.
+    for (const tombstone of useJournalStore.getState().deleted.filter(item => item.user_id === 'device' && item.cleanupPending)) {
+      if (generation !== token) return;
+      try { await cleanupTombstone(tombstone); } catch { useJournalStore.setState({ error: 'The dream was removed. Audio cleanup on this device will retry when your journal syncs.' }); }
+    }
+    if (!owner || !validRequest(owner, token) || !onlineManager.isOnline()) return;
     useJournalStore.setState({ syncing: true });
     let firstPass = true;
     do {
       syncRequested = false;
-      const ids = useJournalStore.getState().entries.filter(entry => entry.user_id === owner && (entry.sync_status === 'local' || firstPass && entry.sync_status !== 'synced')).map(entry => entry.id);
+      const ids = useJournalStore.getState().entries.filter(entry => entry.user_id === owner && entry.last_error !== deletedConflict && (entry.sync_status === 'local' || firstPass && entry.sync_status !== 'synced')).map(entry => entry.id);
       for (const id of ids) { if (!validRequest(owner, token)) return; await syncEntry(id, owner, token); }
       firstPass = false;
       for (const tombstone of [...useJournalStore.getState().deleted]) {
         if (tombstone.user_id !== owner || !validRequest(owner, token)) continue;
         if (tombstone.cleanupPending) {
           try {
-            await removeJournalAudio(tombstone);
-            useJournalStore.setState(state => ({ deleted: state.deleted.map(item => item.id === tombstone.id && item.user_id === owner ? { ...item, local_audio_uri: undefined, cleanupPending: false } : item) })); await persist();
+            await cleanupTombstone(tombstone);
           } catch { useJournalStore.setState({ error: 'The dream was removed. Audio cleanup on this device will retry when your journal syncs.' }); }
         }
         if (tombstone.synced) continue;
@@ -155,14 +173,12 @@ export function journalCloudQueryOptions(owner: string) {
     queryFn: ({ signal }) => pullDreams(owner, signal),
   });
 }
-
 export async function refreshDreams() {
   const owner = getCurrentUser()?.id;
   if (!owner || ownerBlocked(owner) || !onlineManager.isOnline()) return;
   // Explicit refresh bypasses staleTime but shares an already-running request.
   await queryClient.fetchQuery({ ...journalCloudQueryOptions(owner), staleTime: 0 }).catch(() => {});
 }
-
 async function pullDreams(owner: string, signal: AbortSignal) {
   const token = generation;
   const allowed = () => !signal.aborted && validRequest(owner, token);
@@ -195,8 +211,14 @@ async function pullDreams(owner: string, signal: AbortSignal) {
         const local = merged.get(deletion.id);
         if (local && local.user_id !== owner) continue;
         if (local?.sync_version !== undefined && local.sync_version > deletion.sync_version) continue;
+        if (local && local.sync_status !== 'synced') {
+          merged.set(deletion.id, { ...local, sync_status: 'error', last_error: deletedConflict });
+          // Keep the original record and its audio through restart; a durable tombstone would hide it.
+          blocked.add(`${owner}:${deletion.id}`);
+          continue;
+        }
         if (local) merged.delete(deletion.id);
-        if (!blocked.has(`${owner}:${deletion.id}`)) deleted.push({ ...deletion, synced: true, local_audio_uri: local?.local_audio_uri, cleanupPending: true });
+        if (!blocked.has(`${owner}:${deletion.id}`)) deleted.push({ ...deletion, synced: true, local_audio_uri: local?.local_audio_uri, recovery_source: (local as RecoveredJournal | undefined)?.recovery_source, cleanupPending: true });
         blocked.add(`${owner}:${deletion.id}`);
       }
       for (const response of page.dreams) {
@@ -209,15 +231,20 @@ async function pullDreams(owner: string, signal: AbortSignal) {
         const abandoned = accepted.processing_status === 'processing' && !processing.has(`${owner}:${remote.id}`);
         merged.set(remote.id, { ...accepted, processing_status: abandoned ? 'error' : accepted.processing_status, last_error: abandoned ? 'A previous attempt may still be finishing. Tap Restart to check its result or continue processing.' : accepted.last_error });
       }
+      if (watermark && page.sync_cursor && page.sync_cursor !== watermark) throw new Error('The journal snapshot changed during syncing. Please retry.');
       watermark = page.sync_cursor || watermark;
       cursor = page.next_cursor || undefined;
       if (cursor && seen.has(cursor)) throw new Error('Journal pagination did not advance. Please retry.');
       if (cursor) seen.add(cursor);
-      useJournalStore.setState({ entries: [...merged.values()].sort((a, b) => b.dream_date.localeCompare(a.dream_date)), deleted, error: undefined, ...(!cursor && !legacy && page.deleted && watermark ? { cursors: { ...state.cursors, [owner]: watermark } } : {}) });
+      useJournalStore.setState({ entries: [...merged.values()].sort((a, b) => b.dream_date.localeCompare(a.dream_date)), deleted, error: undefined });
       await persist();
+      if (!cursor && !legacy && page.deleted && watermark && allowed()) {
+        const previousCursors = useJournalStore.getState().cursors;
+        useJournalStore.setState({ cursors: { ...previousCursors, [owner]: watermark } });
+        try { await persist(); } catch (error) { useJournalStore.setState({ cursors: previousCursors }); throw error; }
+      }
     } while (cursor);
-    // Only reconciliation metadata is cached: screens use the durable local
-    // entries, so cached server results can never overwrite queued offline edits.
+    // Cache reconciliation metadata; screens continue reading the durable journal.
     return { owner, cursor: useJournalStore.getState().cursors[owner] || null };
   } catch (error) {
     if (allowed()) useJournalStore.setState({ error: message(error) });
@@ -267,6 +294,7 @@ export async function requestDreamProcessing(id: string): Promise<void> {
 }
 export async function retryDream(id: string) {
   const entry = requireEntry(id);
+  if (entry.last_error === deletedConflict) throw new Error(deletedConflict);
   const retryProcessing = ['pending', 'processing', 'error'].includes(entry.processing_status);
   if (entry.sync_status !== 'synced') { replace({ ...entry, sync_status: 'local' }); await persist(); await syncJournal(); }
   if (retryProcessing) await requestDreamProcessing(id);
@@ -280,10 +308,52 @@ export async function getAudioUri(id: string) {
 export async function rebindJournalOwner(previousId: string | undefined, nextId: string, transferPrevious = false) {
   await hydrateJournal();
   if (nextId !== getCurrentUser()?.id || ownerBlocked(nextId)) throw new Error('Your account changed. Reconnect before moving your journal.');
+  const transfer = (owner: string) => !ownerBlocked(owner) && owner !== nextId && (owner === 'device' || transferPrevious && owner === previousId);
+  const state = useJournalStore.getState();
+  if (![...state.entries, ...state.deleted].some(item => transfer(item.user_id))) return;
   invalidateJournalRequests();
-  const transfer = (owner: string) => !ownerBlocked(owner) && (owner === 'device' || transferPrevious && owner === previousId);
-  useJournalStore.setState(state => ({ entries: state.entries.map(entry => transfer(entry.user_id) ? { ...entry, user_id: nextId, sync_status: 'local' } : entry), deleted: state.deleted.map(item => transfer(item.user_id) ? { ...item, user_id: nextId } : item), cursors: { ...state.cursors, [nextId]: '0' } }));
+  useJournalStore.setState({ entries: state.entries.map(entry => transfer(entry.user_id) ? { ...entry, user_id: nextId, sync_status: 'local' } : entry), deleted: state.deleted.map(item => transfer(item.user_id) ? { ...item, user_id: nextId } : item), cursors: { ...state.cursors, [nextId]: '0' } });
   await persist();
+}
+
+/** Called only after explicit email verification of an expired guest's locally retained journal. */
+export type JournalRecoveryResult = { missingAudio: number };
+export async function recoverExpiredGuestJournal(previousId: string, nextId: string): Promise<JournalRecoveryResult> {
+  await hydrateJournal();
+  if (!previousId || previousId === nextId || nextId !== getCurrentUser()?.id || ownerBlocked(nextId) || ownerBlocked(previousId)) throw new Error('Your account changed. Reconnect before recovering your saved dreams.');
+  const state = useJournalStore.getState();
+  const token = generation;
+  const recovered = new Map([...state.entries, ...state.deleted].filter(item => item.user_id === nextId).map(item => [(item as RecoveredJournal).recovery_source, item]));
+  let missingAudio = 0;
+  const clones: RecoveredJournal[] = [];
+  for (const source of state.entries.filter(entry => entry.user_id === previousId)) {
+    const marker = JSON.stringify([previousId, nextId, source.id]);
+    if (recovered.has(marker)) {
+      const existing = recovered.get(marker)!;
+      if ('transcript' in existing && (source.audio_key || source.local_audio_uri || source.audio_url || source.audio_length) && !existing.local_audio_uri && !existing.audio_key) missingAudio++;
+      continue;
+    }
+    const newId = Crypto.randomUUID();
+    const audio = await recoverJournalAudio(source, newId);
+    if (generation !== token || nextId !== getCurrentUser()?.id || ownerBlocked(nextId)) throw new Error('Your account changed. The original journal has been retained.');
+    if (audio.missing) missingAudio++;
+    if (!audio.uri && !(source.transcript.trim() || source.original_text?.trim() || source.summary?.trim())) continue;
+    const { audio_key: _audioKey, audio_url: _audioUrl, sync_version: _syncVersion, local_audio_uri: _localAudio, ...content } = source;
+    const clone: RecoveredJournal = normalizeDreamClock({ ...content, id: newId, user_id: nextId, updated_at: nextRevision(), sync_status: 'local', processing_status: source.processing_status === 'complete' ? 'complete' : 'idle', last_error: undefined, deleted_at: undefined, ...(audio.uri ? { local_audio_uri: audio.uri } : {}) });
+    clone.recovery_source = marker;
+    validateDreamInput(toSaveDreamInput(clone));
+    clones.push(clone); recovered.set(marker, clone);
+  }
+  // Originals remain intact, including their cloud IDs, tombstones and recording references.
+  if (clones.length) {
+    invalidateJournalRequests();
+    const current = useJournalStore.getState();
+    const alreadyRecovered = new Set([...current.entries, ...current.deleted].map(item => (item as RecoveredJournal).recovery_source));
+    useJournalStore.setState({ entries: [...clones.filter(entry => !alreadyRecovered.has(entry.recovery_source)), ...current.entries], cursors: { ...current.cursors, [nextId]: '0' }, error: undefined });
+  }
+  // A retry after partial storage failure reuses existing source markers and persists the same IDs.
+  await persist();
+  return { missingAudio };
 }
 
 /** Pause writes before deleting remotely; in-flight work finishes before the account is removed. */

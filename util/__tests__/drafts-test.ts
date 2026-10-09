@@ -62,6 +62,20 @@ it('retains a draft through guest-to-email linking and clears only its deleted o
   expect(useCaptureDraft.getState().draft?.ownerId).toBeUndefined();
   expect(FileSystem.deleteAsync).toHaveBeenCalledWith('file:///documents/dreamer-recordings/owned.m4a', { idempotent: true });
 });
+
+it('copies an expired guest draft with a fresh identity while preserving its original', async () => {
+  useCaptureDraft.setState({ draft: { ...useCaptureDraft.getState().draft!, ownerId: 'guest-a', text: 'Retain my guest draft', audioUri: 'file:///documents/dreamer-recordings/draft-a.m4a' } });
+  mockDraftOwner = 'email-a';
+  await rebindDraftOwner('guest-a', 'email-a', true, true);
+  expect(useCaptureDraft.getState().draft).toMatchObject({ id: 'new-id', ownerId: 'email-a', text: 'Retain my guest draft' });
+  const calls = jest.mocked(AsyncStorage.setItem).mock.calls;
+  const retained = JSON.parse(calls[calls.length - 1][1]).drafts;
+  expect(retained).toEqual(expect.arrayContaining([
+    expect.objectContaining({ id: 'draft-a', ownerId: 'guest-a', text: 'Retain my guest draft' }),
+    expect.objectContaining({ id: 'new-id', ownerId: 'email-a', text: 'Retain my guest draft' }),
+  ]));
+  expect(FileSystem.deleteAsync).not.toHaveBeenCalled();
+});
 it('never clears another owner’s draft or a protected shared recording', async () => {
   useCaptureDraft.setState({ draft: { ...useCaptureDraft.getState().draft!, ownerId: 'other-owner' } });
   await updateDraft({ text: 'Private to another owner', audioUri: 'file:///documents/dreamer-recordings/shared.m4a' });
@@ -145,8 +159,19 @@ it('clears an inactive deleted owner while retaining the active account draft', 
 it('never attaches or deletes a recording outside managed recording storage', async () => {
   await expect(updateDraft({ audioUri: 'file:///documents/private-database.sqlite' })).rejects.toThrow('Only recordings');
   await expect(retainRecording('draft-a', 'file:///outside/secret.m4a', 1)).rejects.toThrow('unavailable');
+  await expect(retainRecording('draft-a', 'file:///documents/private.m4a', 1)).rejects.toThrow('unavailable');
+  await expect(updateDraft({ temporaryAudioUri: 'file:///cache/private.sqlite' })).rejects.toThrow('outside');
   expect(FileSystem.copyAsync).not.toHaveBeenCalled();
   useCaptureDraft.setState({ draft: { ...useCaptureDraft.getState().draft!, audioUri: 'file:///documents/private-database.sqlite', ownerId: 'email-a' } });
   await clearDeletedAccountDraft('email-a');
   expect(FileSystem.deleteAsync).not.toHaveBeenCalled();
+});
+it('removes an interrupted cache recording only after persisting account cleanup', async () => {
+  useCaptureDraft.setState({ draft: { ...useCaptureDraft.getState().draft!, ownerId: 'deleted-owner' } });
+  await updateDraft({ temporaryAudioUri: 'file:///cache/Audio/recording-a.m4a', recordingState: 'interrupted' });
+  jest.clearAllMocks();
+  await clearDeletedAccountDraft('deleted-owner');
+  expect(FileSystem.deleteAsync).toHaveBeenCalledWith('file:///cache/Audio/recording-a.m4a', { idempotent: true });
+  const persistOrder = jest.mocked(AsyncStorage.setItem).mock.invocationCallOrder[0];
+  expect(persistOrder).toBeLessThan(jest.mocked(FileSystem.deleteAsync).mock.invocationCallOrder[0]);
 });

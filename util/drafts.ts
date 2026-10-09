@@ -38,7 +38,9 @@ function parseDraft(value: unknown): CaptureDraft {
 }
 function safeRecordingSource(uri: unknown): uri is string {
   if (typeof uri !== 'string' || /%|\.\.|[?#\\]/.test(uri)) return false;
-  return [FileSystem.documentDirectory, FileSystem.cacheDirectory].some(root => Boolean(root) && uri.startsWith(root!));
+  const managed = Boolean(isManagedRecordingUri(uri, FileSystem.documentDirectory));
+  if (managed) return true;
+  return Boolean(FileSystem.cacheDirectory && uri.startsWith(FileSystem.cacheDirectory) && /^[A-Za-z0-9_./-]+\.m4a$/.test(uri.slice(FileSystem.cacheDirectory.length)));
 }
 export async function hydrateDraft() {
   if (useCaptureDraft.getState().hydrated) return;
@@ -121,8 +123,8 @@ export async function completeDraft(draftId: string) {
 }
 export async function flushDraft() { await hydrateDraft(); const draft = useCaptureDraft.getState().draft!; assertCurrentOwner(draft); await persist(draft); return draft; }
 
-/** Only a server-proven guest-to-email link may transfer a previous account’s draft. */
-export async function rebindDraftOwner(previousId: string | undefined, nextId: string, transferPrevious = false) {
+/** Move a live linked guest draft, or copy an explicitly recovered expired guest. */
+export async function rebindDraftOwner(previousId: string | undefined, nextId: string, transferPrevious = false, copyPrevious = false) {
   await hydrateDraft();
   const current = useCaptureDraft.getState().draft!; keep(current);
   const previous = transferPrevious && previousId ? retained.get(ownerKey(previousId)) : undefined;
@@ -130,8 +132,8 @@ export async function rebindDraftOwner(previousId: string | undefined, nextId: s
   const source = previous || unowned;
   const existing = retained.get(nextId);
   // Do not overwrite another retained draft when linking an account with its own capture.
-  const draft = existing || (source ? { ...source, ownerId: nextId } : newDraft(nextId));
-  if (source && !existing) retained.delete(ownerKey(source.ownerId));
+  const draft = existing || (source ? { ...source, ownerId: nextId, ...(copyPrevious ? { id: Crypto.randomUUID() } : {}) } : newDraft(nextId));
+  if (source && !existing && !copyPrevious) retained.delete(ownerKey(source.ownerId));
   useCaptureDraft.setState({ draft }); await persist(draft);
 }
 
@@ -145,7 +147,7 @@ export async function clearDeletedAccountDraft(owner: string, protectedFiles: st
   useCaptureDraft.setState({ draft }); await persist(draft);
   const preserved = [...retained.values()].flatMap(item => [item.audioUri, item.temporaryAudioUri]);
   for (const uri of new Set([removed.audioUri, removed.temporaryAudioUri])) {
-    if (!isManagedRecordingUri(uri, FileSystem.documentDirectory) || protectedFiles.includes(uri) || preserved.includes(uri)) continue;
+    if (!safeRecordingSource(uri) || protectedFiles.includes(uri) || preserved.includes(uri)) continue;
     try { await FileSystem.deleteAsync(uri, { idempotent: true }); }
     catch { throw new Error('Your account was deleted, but a draft recording could not be removed from this device.'); }
   }

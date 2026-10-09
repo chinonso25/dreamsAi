@@ -64,8 +64,8 @@ export default function SettingsScreen() {
         await sendEmailCode(email); setCodeSent(true); setMessage('Check your inbox for a six-digit code.');
       } else {
         if (!/^\d{6}$/.test(code.trim())) { setMessage('Enter the six-digit code from your email.'); return; }
-        await verifyEmailCode(email, code); setAccountVisible(false); setCode(''); setCodeSent(false);
-        Alert.alert('Email account added', 'Use this email to recover your dreams on another device.');
+        const result = await verifyEmailCode(email, code); setAccountVisible(false); setCode(''); setCodeSent(false);
+        Alert.alert(result.recoveryWarning ? 'Journal recovered' : 'Email account added', result.recoveryWarning || 'Use this email to recover your dreams on another device.');
       }
     } catch (e) { setMessage(e instanceof Error ? e.message : 'Could not connect. Please try again.'); }
   };

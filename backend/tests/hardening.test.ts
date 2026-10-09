@@ -136,6 +136,35 @@ describe('atomic cumulative media budgets',()=>{
     await reserveAudio(quotas(24,24),'owner','new',12);
     expect(await ownerUsage()).toBe(24);expect(await globalUsage()).toBe(24);
   });
+  it('does not delete a renewed upload reservation selected by an earlier cleanup scan',async()=>{
+    await user();await reserveAudio(quotas(),'owner','renewed',12);await env.AUDIO.put('renewed','recording');
+    await env.DB.prepare('UPDATE audio_cleanup SET not_before=0').run();
+    let selected!:()=>void;const selection=new Promise<void>(resolve=>{selected=resolve;});
+    let release!:()=>void;const continueScan=new Promise<void>(resolve=>{release=resolve;});
+    const delayedDB={prepare:(sql:string)=>{
+      const statement=env.DB.prepare(sql);
+      if(sql.startsWith('SELECT audio_key FROM audio_cleanup'))return {bind:(...values:unknown[])=>({all:async()=>{
+        const rows=await statement.bind(...values).all();selected();await continueScan;return rows;
+      }})} as unknown as D1PreparedStatement;
+      return statement;
+    },batch:env.DB.batch.bind(env.DB),exec:env.DB.exec.bind(env.DB)} as D1Database;
+    const cleanup=cleanAudio({...env,DB:delayedDB});
+    await selection;
+    try{await reserveAudio(quotas(),'owner','renewed',12);}finally{release();}
+    await cleanup;
+    expect(await env.AUDIO.head('renewed')).not.toBeNull();expect(await globalUsage()).toBe(12);
+    expect((await env.DB.prepare('SELECT not_before FROM audio_cleanup WHERE audio_key=?').bind('renewed').first<{not_before:number}>())!.not_before).toBeGreaterThan(Date.now());
+  });
+  it('blocks reupload while a cleanup deletion owns the same object key',async()=>{
+    await user();await reserveAudio(quotas(),'owner','leased',12);await env.AUDIO.put('leased','recording');
+    await env.DB.prepare('UPDATE audio_cleanup SET not_before=0').run();
+    let deleting!:()=>void;const deletionStarted=new Promise<void>(resolve=>{deleting=resolve;});
+    let release!:()=>void;const continueDelete=new Promise<void>(resolve=>{release=resolve;});
+    const bucket={delete:async(key:string)=>{deleting();await continueDelete;await env.AUDIO.delete(key);}} as unknown as R2Bucket;
+    const cleanup=cleanAudio({...env,AUDIO:bucket});await deletionStarted;
+    try{await expect(reserveAudio(quotas(),'owner','leased',12)).rejects.toMatchObject({code:'STORAGE_BUSY'});expect(await globalUsage()).toBe(12);}finally{release();}
+    await cleanup;expect(await globalUsage()).toBe(0);
+  });
   it('moves existing audio and deletion tombstones during verified guest recovery without dropping over-quota data',async()=>{
     const authEnv={...env,EMAIL:{send:vi.fn().mockResolvedValue({messageId:'local'})}};
     const auth=createAuth(authEnv);
@@ -207,5 +236,19 @@ describe('canonical dates and incremental sync',()=>{
     const next=await request(`/v1/dreams?limit=1&cursor=${page.next_cursor}&until=${page.sync_cursor}`);
     expect(next.dreams.map(row=>row.id)).toEqual([second]);expect(next.next_cursor).toBeNull();
     expect((await request('/v1/dreams/sync?limit=1')).dreams).toHaveLength(1);
+  });
+  it('enforces the entry cap atomically while permitting edits and replacement after a deletion',async()=>{
+    await user();
+    await env.DB.prepare(`WITH RECURSIVE entries(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM entries WHERE n<10000)
+      INSERT INTO dreams(id,user_id,title,dream_date,created_at,updated_at)
+      SELECT printf('00000000-0000-4000-8000-%012d',n),'owner','Existing','2026-10-08','2026-10-08T10:00:00.000Z','2026-10-08T10:00:00.000Z' FROM entries`).run();
+    await expect(seed()).rejects.toMatchObject({code:'JOURNAL_LIMIT'});
+    const existing='00000000-0000-4000-8000-000000000001';
+    expect((await saveDream(env,existing,'owner',dreamInput.parse(input))).transcript).toBe(input.transcript);
+    await deleteDream(env,existing,'owner');
+    const created=await Promise.allSettled([seed(),seed(second)]);
+    expect(created.filter(item=>item.status==='fulfilled')).toHaveLength(1);
+    expect(created.filter(item=>item.status==='rejected')).toHaveLength(1);
+    expect((await env.DB.prepare('SELECT COUNT(*) AS count FROM dreams WHERE user_id=? AND deleted_at IS NULL').bind('owner').first<{count:number}>())!.count).toBe(10000);
   });
 });

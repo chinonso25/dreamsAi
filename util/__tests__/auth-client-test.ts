@@ -30,7 +30,38 @@ it('keeps an expired email account private instead of creating a guest', async (
   await client.rememberUser(emailOwner);
   mockClient.getSession.mockResolvedValue({ data: null });
   await expect(client.ensureSession()).rejects.toThrow('Sign in with your email again');
+  await expect(client.ensureSession()).rejects.toBeInstanceOf(client.SessionRecoveryError);
   expect(client.getCurrentUser()).toEqual(emailOwner);
+  expect(mockClient.signIn.anonymous).not.toHaveBeenCalled();
+});
+
+it('retains an expired guest journal owner instead of silently creating another guest', async () => {
+  await client.rememberUser(guestOwner);
+  mockClient.getSession.mockResolvedValue({ data: null });
+  await expect(client.ensureSession()).rejects.toMatchObject({ name: 'SessionRecoveryError', code: 'SESSION_RECOVERY_REQUIRED', owner: guestOwner });
+  expect(client.getCurrentUser()).toEqual(guestOwner);
+  expect(mockClient.signIn.anonymous).not.toHaveBeenCalled();
+  expect(AsyncStorage.setItem).toHaveBeenCalledTimes(1);
+  expect(AsyncStorage.setItem).toHaveBeenCalledWith('dreamer-owner-v1', JSON.stringify(guestOwner));
+});
+
+it('retains a cached guest loaded from disk when its session is missing after restart', async () => {
+  jest.mocked(AsyncStorage.getItem).mockResolvedValue(JSON.stringify(guestOwner));
+  mockClient.getSession.mockResolvedValue({ data: null });
+  await expect(client.authenticatedHeaders(guestOwner.id)).rejects.toBeInstanceOf(client.SessionRecoveryError);
+  expect(client.getCurrentUser()).toEqual(guestOwner);
+  expect(mockClient.signIn.anonymous).not.toHaveBeenCalled();
+  expect(AsyncStorage.setItem).not.toHaveBeenCalled();
+});
+
+it('clears a previously verified session cache after a forced check discovers expiry', async () => {
+  mockClient.getSession.mockResolvedValue(session({ ...emailOwner, ...guestOwner }));
+  await client.ensureSession();
+  mockClient.getSession.mockResolvedValue({ data: null });
+  await expect(client.ensureSession({ force: true })).rejects.toBeInstanceOf(client.SessionRecoveryError);
+  await expect(client.ensureSession()).rejects.toBeInstanceOf(client.SessionRecoveryError);
+  expect(mockClient.getSession).toHaveBeenCalledTimes(3);
+  expect(client.getCurrentUser()?.id).toBe(guestOwner.id);
   expect(mockClient.signIn.anonymous).not.toHaveBeenCalled();
 });
 
