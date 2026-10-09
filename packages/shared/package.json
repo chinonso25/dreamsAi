@@ -1,0 +1,16 @@
+{
+  "name": "@thedreamer/shared",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./dream-contract": "./dream-contract.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.3"
+  }
+}
