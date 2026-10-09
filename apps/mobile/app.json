@@ -2,7 +2,7 @@
   "expo": {
     "name": "Dream AI",
     "slug": "dreamAi",
-    "version": "1.0.4",
+    "version": "1.0.5",
     "orientation": "portrait",
     "icon": "./assets/images/app-icon/icon.png",
     "scheme": "dreamai",
@@ -36,10 +36,14 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 200,
+          "image": "./assets/images/app-icon/adaptive-icon.png",
+          "imageWidth": 240,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff"
+          "backgroundColor": "#F7F5FC",
+          "dark": {
+            "image": "./assets/images/app-icon/adaptive-icon.png",
+            "backgroundColor": "#171323"
+          }
         }
       ],
       "expo-font",

@@ -15,6 +15,7 @@ import {
 import { ContextWrapper } from "@/contexts/ContextWrappers";
 
 SplashScreen.preventAutoHideAsync();
+SplashScreen.setOptions({ duration: 250, fade: true });
 
 export default function RootLayout() {
   const [loaded, fontError] = useFonts({

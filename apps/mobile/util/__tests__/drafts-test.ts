@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, jest } from '@jest/globals';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
-import { clearDeletedAccountDraft, completeDraft, flushDraft, hydrateDraft, rebindDraftOwner, retainRecording, updateDraft, useCaptureDraft } from '../drafts';
+import { clearDeletedAccountDraft, discardDraftRecording, completeDraft, flushDraft, hydrateDraft, rebindDraftOwner, retainRecording, updateDraft, useCaptureDraft } from '../drafts';
 
 let mockDraftOwner: string | undefined;
 jest.mock('../auth-client', () => ({ getCurrentUser: () => mockDraftOwner ? { id: mockDraftOwner } : null }));
@@ -174,4 +174,33 @@ it('removes an interrupted cache recording only after persisting account cleanup
   expect(FileSystem.deleteAsync).toHaveBeenCalledWith('file:///cache/Audio/recording-a.m4a', { idempotent: true });
   const persistOrder = jest.mocked(AsyncStorage.setItem).mock.invocationCallOrder[0];
   expect(persistOrder).toBeLessThan(jest.mocked(FileSystem.deleteAsync).mock.invocationCallOrder[0]);
+});
+
+it('clears missing audio and its temporary source while preserving written text', async () => {
+  await updateDraft({ text: 'Keep my dream', audioUri: 'file:///documents/dreamer-recordings/missing.m4a', temporaryAudioUri: 'file:///cache/Audio/interrupted.m4a', audioLength: 8, recordingState: 'interrupted' });
+  jest.mocked(FileSystem.deleteAsync).mockRejectedValueOnce(new Error('File unavailable'));
+  await discardDraftRecording('draft-a');
+  expect(useCaptureDraft.getState().draft).toMatchObject({ text: 'Keep my dream', recordingState: 'idle' });
+  expect(useCaptureDraft.getState().draft?.audioUri).toBeUndefined();
+  expect(useCaptureDraft.getState().draft?.temporaryAudioUri).toBeUndefined();
+  expect(FileSystem.deleteAsync).toHaveBeenCalledWith('file:///cache/Audio/interrupted.m4a', { idempotent: true });
+  await updateDraft({ temporaryAudioUri: 'file:///cache/Audio/new.m4a', recordingState: 'recording' });
+  expect(useCaptureDraft.getState().draft?.recordingState).toBe('recording');
+});
+it('restores recording paths from a prior iOS app container', async () => {
+  useCaptureDraft.setState({ draft: null, hydrated: false });
+  jest.mocked(AsyncStorage.getItem).mockResolvedValueOnce(JSON.stringify({ id: 'restored', text: 'Retained words', dreamDate: '2026-10-08', updatedAt: '2026-10-08T00:00:00Z', recordingState: 'ready', audioUri: 'file:///var/mobile/Containers/Data/Application/00000000-0000-0000-0000-000000000000/Documents/dreamer-recordings/restored.m4a' }));
+  await hydrateDraft();
+  expect(useCaptureDraft.getState().draft).toMatchObject({ text: 'Retained words', audioUri: 'file:///documents/dreamer-recordings/restored.m4a' });
+});
+it('clears a recovered attachment without deleting audio retained by its original owner', async () => {
+  useCaptureDraft.setState({ draft: { ...useCaptureDraft.getState().draft!, ownerId: 'guest-a' } });
+  mockDraftOwner = 'guest-a';
+  await updateDraft({ audioUri: 'file:///documents/dreamer-recordings/shared.m4a' });
+  mockDraftOwner = 'email-a';
+  await rebindDraftOwner('guest-a', 'email-a', true, true);
+  jest.clearAllMocks();
+  await discardDraftRecording(useCaptureDraft.getState().draft!.id);
+  expect(useCaptureDraft.getState().draft?.audioUri).toBeUndefined();
+  expect(FileSystem.deleteAsync).not.toHaveBeenCalled();
 });

@@ -4,6 +4,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { create } from 'zustand';
 import { getCurrentUser } from './auth-client';
 import { isDreamDate, isManagedRecordingUri, localDateKey } from '@thedreamer/shared/dream-contract';
+import { currentRecordingUri } from './recording-files';
 
 const STORAGE_KEY = 'dreamer:capture-draft:v1';
 export type CaptureDraft = {
@@ -32,7 +33,8 @@ function persist(draft: CaptureDraft) {
 }
 function parseDraft(value: unknown): CaptureDraft {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Unreadable draft');
-  const draft = value as CaptureDraft;
+  const stored = value as CaptureDraft;
+  const draft = { ...stored, ...(typeof stored.audioUri === 'string' ? { audioUri: currentRecordingUri(stored.audioUri) } : {}), ...(typeof stored.temporaryAudioUri === 'string' ? { temporaryAudioUri: currentRecordingUri(stored.temporaryAudioUri) } : {}) };
   if (typeof draft.id !== 'string' || !/^[A-Za-z0-9_-]+$/.test(draft.id) || typeof draft.text !== 'string' || !isDreamDate(draft.dreamDate) || typeof draft.updatedAt !== 'string' || !['idle', 'recording', 'paused', 'interrupted', 'ready'].includes(draft.recordingState) || (draft.ownerId !== undefined && typeof draft.ownerId !== 'string') || (draft.audioUri !== undefined && !isManagedRecordingUri(draft.audioUri, FileSystem.documentDirectory)) || (draft.temporaryAudioUri !== undefined && !safeRecordingSource(draft.temporaryAudioUri))) throw new Error('Unreadable draft');
   return { ...draft };
 }
@@ -111,7 +113,13 @@ export async function discardDraftRecording(draftId: string) {
   const draft = useCaptureDraft.getState().draft;
   if (draft?.id !== draftId) return;
   await updateDraft({ audioUri: undefined, audioLength: undefined, temporaryAudioUri: undefined, recordingState: 'idle' }, draftId);
-  if (isManagedRecordingUri(draft.audioUri, FileSystem.documentDirectory)) await FileSystem.deleteAsync(draft.audioUri, { idempotent: true });
+  const protectedFiles = new Set([...retained.values()].flatMap(item => [item.audioUri, item.temporaryAudioUri]));
+  // An unavailable file must not prevent clearing the attachment and recording again.
+  for (const uri of new Set([draft.audioUri, draft.temporaryAudioUri])) {
+    if (safeRecordingSource(uri) && !protectedFiles.has(uri)) {
+      try { await FileSystem.deleteAsync(uri, { idempotent: true }); } catch { /* The attachment is already cleared. */ }
+    }
+  }
 }
 export async function completeDraft(draftId: string) {
   const current = useCaptureDraft.getState().draft;

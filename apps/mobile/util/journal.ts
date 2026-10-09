@@ -9,6 +9,7 @@ import { parseDreamResponse, parseDreamListResponse, parseDreamSyncResponse, toS
 import { persistJournal, readJournal, waitForJournalWrites, type JournalDeletion } from './journal-persistence';
 import { nextRevision, editDream, mergeRemote, normalizeDreamClock } from './journal-transitions';
 import { journalAudioUri, uploadJournalAudio, removeJournalAudio, managedRecording, cancelJournalAudio, recoverJournalAudio } from './journal-audio';
+import { currentRecordingUri } from './recording-files';
 
 type RecoveredJournal = Journal & { recovery_source?: string };
 type State = { entries: Journal[]; deleted: JournalDeletion[]; retiredOwners: string[]; cursors: Record<string, string>; hydrated: boolean; syncing: boolean; error?: string };
@@ -51,8 +52,8 @@ export async function hydrateJournal() {
     const data = await readJournal();
     useJournalStore.setState({ ...data, cursors: data.cursors || {}, entries: data.entries.filter(entry => !data.retiredOwners.includes(entry.user_id)).map(entry => {
       const wasProcessing = entry.processing_status === 'processing' || entry.processing_status === 'pending';
-      return { ...entry, sync_status: entry.sync_status === 'syncing' ? 'local' : entry.sync_status, processing_status: wasProcessing ? 'error' : entry.processing_status, last_error: wasProcessing ? interrupted : entry.last_error };
-    }), deleted: data.deleted.filter(item => !data.retiredOwners.includes(item.user_id)), hydrated: true, error: undefined });
+      return { ...entry, local_audio_uri: entry.local_audio_uri ? currentRecordingUri(entry.local_audio_uri) : undefined, sync_status: entry.sync_status === 'syncing' ? 'local' : entry.sync_status, processing_status: wasProcessing ? 'error' : entry.processing_status, last_error: wasProcessing ? interrupted : entry.last_error };
+    }), deleted: data.deleted.filter(item => !data.retiredOwners.includes(item.user_id)).map(item => ({ ...item, local_audio_uri: item.local_audio_uri ? currentRecordingUri(item.local_audio_uri) : undefined })), hydrated: true, error: undefined });
   })().catch(error => { hydration = undefined; useJournalStore.setState({ error: message(error) }); throw error; });
   return hydration;
 }

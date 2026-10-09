@@ -143,3 +143,17 @@ it('does not start a player whose initial native status already reports failure'
   expect(mockPlayer.play).not.toHaveBeenCalled(); expect(useRecordingPlayback.getState().loading).toBe(false);
   expect(useRecordingPlayback.getState().error).toContain('Try again');
 });
+
+it('plays a draft locally without depending on lock-screen controls', async () => {
+  mockPlayer.setActiveForLockScreen.mockImplementationOnce(() => { throw new Error('OS controls unavailable'); });
+  await playRecording({ ...track, draft: true });
+  expect(mockPlayer.play).toHaveBeenCalledTimes(1);
+  expect(mockPlayer.setActiveForLockScreen).not.toHaveBeenCalled();
+  mockPlayer.setActiveForLockScreen.mockReset();
+});
+it('keeps saved audio playable when optional lock-screen setup fails', async () => {
+  mockPlayer.setActiveForLockScreen.mockImplementationOnce(() => { throw new Error('OS controls unavailable'); });
+  await playRecording(track);
+  expect(mockPlayer.play).toHaveBeenCalledTimes(1);
+  expect(useRecordingPlayback.getState().error).toBeUndefined();
+});
