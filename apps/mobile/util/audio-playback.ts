@@ -85,7 +85,12 @@ export async function playRecording(track: RecordingTrack, reload = false) {
     if (same && active.isLoaded && (active.currentStatus.didJustFinish || active.duration > 0 && active.currentTime >= active.duration)) await active.seekTo(0);
     if (token !== generation || player !== active || recording || !validateRecordingPlaybackAccess()) return;
     // Generic metadata keeps private dream titles off the lock screen.
-    active.setActiveForLockScreen(true, { title: 'Dream recording', artist: 'The Dreamer' }, { showSeekBackward: true, showSeekForward: true });
+    // Previewing a draft needs only local playback. Optional OS controls must not
+    // stop playable audio when the native media service is unavailable.
+    if (!track.draft) {
+      try { active.setActiveForLockScreen(true, { title: 'Dream recording', artist: 'The Dreamer' }, { showSeekBackward: true, showSeekForward: true }); }
+      catch { /* Foreground playback remains available. */ }
+    }
     if (!playRequested || token !== generation || player !== active) return;
     active.play();
     clearTimer();

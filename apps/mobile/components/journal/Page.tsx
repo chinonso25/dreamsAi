@@ -1,3 +1,4 @@
+import { Brand } from '../Brand';
 import { MotionPressable, MotionReveal } from '@/components/motion/Motion';
 import { ActivityIndicator, Alert, Modal, Platform, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -17,7 +18,7 @@ export function JournalNotice({ error, retry }: { error?: string; retry: () => v
 }
 export function EmptyDreams({ hydrated, error, title, body, action, actionLabel }: { hydrated: boolean; error?: string; title: string; body: string; action?: () => void; actionLabel?: string }) {
   const c = useJournalColors();
-  if (!hydrated && !error) return <ActivityIndicator color={c.accent} style={{ marginTop: 40 }} />;
+  if (!hydrated && !error) return <View style={{ marginTop: 40, alignItems: 'center', gap: 20 }}><Brand /><ActivityIndicator color={c.accent} /></View>;
   return <MotionReveal subtle style={s.empty}><View style={[s.emptyIcon, { backgroundColor: c.elevated }]}><Ionicons accessible={false} name="moon-outline" size={28} color={c.accent} /></View><Text style={[s.emptyTitle, { color: c.ink }]}>{!hydrated && error ? 'Could not open your journal' : title}</Text><Text style={[s.emptyBody, { color: c.muted }]}>{!hydrated && error ? 'Your saved data is retained. Tap the refresh notice to retry.' : body}</Text>{action && actionLabel && <MotionPressable accessibilityRole="button" onPress={action} style={s.emptyAction}><Text style={[s.link, { color: c.accent }]}>{actionLabel}</Text></MotionPressable>}</MotionReveal>;
 }
 export function SortButton({ value, onChange }: { value: DreamSort; onChange: (sort: DreamSort) => void }) {
