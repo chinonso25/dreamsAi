@@ -1,12 +1,13 @@
 import React from 'react';
 import renderer from 'react-test-renderer';
 import { AppState } from 'react-native';
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import Purchases, { CustomerInfo } from 'react-native-purchases';
 import PurchasesUI from 'react-native-purchases-ui';
 import { ensureSession } from '@/util/auth-client';
 import { apiRequest } from '@/util/api';
 import { SubscriptionProvider, useSubscription } from '../SubscriptionProvider';
+import { queryClient } from '@/util/query-client';
 
 let mockAuthUser = { id: 'guest-a', isAnonymous: true };
 let mockCurrentUser = { id: 'guest-a', isAnonymous: true };
@@ -35,7 +36,10 @@ let context: ReturnType<typeof useSubscription>;
 function Probe() { const value = useSubscription(); React.useEffect(() => { context = value; }, [value]); return null; }
 async function mount() { let tree!: renderer.ReactTestRenderer; await renderer.act(async () => { tree = renderer.create(<SubscriptionProvider><Probe /></SubscriptionProvider>); }); return tree; }
 async function unmount(tree: renderer.ReactTestRenderer) { await renderer.act(async () => tree.unmount()); }
+afterEach(() => { queryClient.clear(); });
 beforeEach(() => {
+  queryClient.setQueryDefaults(['account'], { gcTime: Infinity });
+  queryClient.clear();
   jest.clearAllMocks(); jest.spyOn(AppState, 'addEventListener').mockReturnValue({ remove: jest.fn() }); mockAuthUser = { id: 'guest-a', isAnonymous: true }; mockCurrentUser = mockAuthUser;
   jest.mocked(ensureSession).mockImplementation(async () => mockCurrentUser);
   api.mockResolvedValue({ premium: false });
@@ -176,14 +180,19 @@ it('does not let a late inactive SDK refresh override freshly verified premium',
   await renderer.act(async () => { resolveOlder(inactive); expect(await older).toBe(true); });
   expect(context.isSubscribed).toBe(true); await unmount(tree);
 });
-it('keeps the latest server verification when an older response arrives late', async () => {
+it('shares overlapping server verification and fetches fresh data on the next explicit refresh', async () => {
   const tree = await mount();
-  let resolveOlder!: (result: unknown) => void;
-  api.mockImplementationOnce(() => new Promise(resolve => { resolveOlder = resolve; }));
-  let older!: Promise<boolean>;
-  await renderer.act(async () => { older = context.refreshSubscription(); for (let index = 0; index < 15; index++) await Promise.resolve(); });
+  api.mockClear();
+  let resolveShared!: (result: unknown) => void;
+  api.mockImplementationOnce(() => new Promise(resolve => { resolveShared = resolve; }));
+  let first!: Promise<boolean>; let second!: Promise<boolean>;
+  await renderer.act(async () => {
+    first = context.refreshSubscription(); second = context.refreshSubscription();
+    for (let index = 0; index < 20; index++) await Promise.resolve();
+  });
+  expect(api).toHaveBeenCalledTimes(1);
+  await renderer.act(async () => { resolveShared({ premium: false }); expect(await first).toBe(false); expect(await second).toBe(false); });
   api.mockResolvedValue({ premium: true });
   await renderer.act(async () => { expect(await context.refreshSubscription()).toBe(true); });
-  await renderer.act(async () => { resolveOlder({ premium: false }); expect(await older).toBe(true); });
   expect(context.isSubscribed).toBe(true); await unmount(tree);
 });

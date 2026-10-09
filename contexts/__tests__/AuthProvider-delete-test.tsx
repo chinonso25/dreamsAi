@@ -9,7 +9,7 @@ import { forgetDeletedUser } from '@/util/auth-client';
 
 jest.mock('expo-network', () => ({ useNetworkState: () => ({ isConnected: false }) }));
 jest.mock('@/util/auth-client', () => ({ cachedUser: async () => ({ id: 'email-owner', email: 'test@example.invalid', isAnonymous: false }), ensureSession: async () => ({ id: 'email-owner', isAnonymous: false }), rememberUser: jest.fn(), forgetDeletedUser: jest.fn<() => Promise<void>>(), authClient: {} }));
-jest.mock('@/util/journal', () => ({ hydrateJournal: jest.fn<() => Promise<void>>(), rebindJournalOwner: jest.fn<() => Promise<void>>(), refreshDreams: jest.fn<() => Promise<void>>(), syncJournal: jest.fn<() => Promise<void>>(), beginAccountDeletion: jest.fn<() => Promise<void>>(), cancelAccountDeletion: jest.fn(), clearDeletedAccountJournal: jest.fn<() => Promise<void>>(), useJournalStore: { getState: () => ({ entries: [], deleted: [] }) } }));
+jest.mock('@/util/journal', () => ({ hydrateJournal: jest.fn<() => Promise<void>>(), invalidateJournalRequests: jest.fn(), rebindJournalOwner: jest.fn<() => Promise<void>>(), refreshDreams: jest.fn<() => Promise<void>>(), syncJournal: jest.fn<() => Promise<void>>(), beginAccountDeletion: jest.fn<() => Promise<void>>(), cancelAccountDeletion: jest.fn(), clearDeletedAccountJournal: jest.fn<() => Promise<void>>(), useJournalStore: { getState: () => ({ entries: [], deleted: [] }) } }));
 jest.mock('@/util/drafts', () => ({ clearDeletedAccountDraft: jest.fn<() => Promise<void>>(), rebindDraftOwner: jest.fn<() => Promise<void>>() }));
 jest.mock('@/util/api', () => ({ apiRequest: jest.fn<() => Promise<{ deleted: boolean }>>() }));
 let auth!: ReturnType<typeof useAuth>;
@@ -35,7 +35,7 @@ it('waits for server acknowledgment before clearing any local journal, draft or 
   expect(clearDeletedAccountDraft).not.toHaveBeenCalled();
   expect(forgetDeletedUser).not.toHaveBeenCalled();
   await act(async () => { acknowledge({ deleted: true }); await pending; });
-  expect(apiRequest).toHaveBeenCalledWith('/v1/account', { method: 'DELETE' });
+  expect(apiRequest).toHaveBeenCalledWith('/v1/account', { method: 'DELETE', expectedOwner: 'email-owner' });
   expect(clearDeletedAccountJournal).toHaveBeenCalledWith('email-owner');
   expect(clearDeletedAccountDraft).toHaveBeenCalledWith('email-owner', []);
   expect(forgetDeletedUser).toHaveBeenCalledWith('email-owner');
@@ -44,6 +44,14 @@ it('keeps local data and its session when the server cannot confirm deletion', a
   deleteAPI.mockRejectedValue(new Error('Connection interrupted'));
   await act(async () => { await expect(auth.deleteAccount()).rejects.toThrow('Connection interrupted'); });
   expect(cancelAccountDeletion).toHaveBeenCalledWith('email-owner');
+  expect(clearDeletedAccountJournal).not.toHaveBeenCalled();
+  expect(clearDeletedAccountDraft).not.toHaveBeenCalled();
+  expect(forgetDeletedUser).not.toHaveBeenCalled();
+});
+
+it('requires an explicit boolean acknowledgment before clearing device data', async () => {
+  deleteAPI.mockResolvedValue({ deleted: 'false' as unknown as boolean });
+  await act(async () => { await expect(auth.deleteAccount()).rejects.toThrow('could not be confirmed'); });
   expect(clearDeletedAccountJournal).not.toHaveBeenCalled();
   expect(clearDeletedAccountDraft).not.toHaveBeenCalled();
   expect(forgetDeletedUser).not.toHaveBeenCalled();

@@ -3,38 +3,43 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { fetch as expoFetch } from 'expo/fetch';
 import { apiRequest } from '../api';
 import { completeDraft, updateDraft, useCaptureDraft } from '../drafts';
-import { beginAccountDeletion, clearDeletedAccountJournal, saveDream, updateDream, deleteDream, refreshDreams, hydrateJournal, requestDreamProcessing, retryDream, syncJournal, useJournalStore } from '../journal';
+import { beginAccountDeletion, clearDeletedAccountJournal, saveDream, updateDream, deleteDream, refreshDreams, hydrateJournal, requestDreamProcessing, retryDream, syncJournal, useJournalStore, invalidateJournalRequests, rebindJournalOwner } from '../journal';
 import type { Journal } from '@/types';
+import { queryClient } from '../query-client';
 
-jest.mock('@react-native-async-storage/async-storage', () => ({ getItem: jest.fn<() => Promise<string | null>>(), setItem: jest.fn<() => Promise<void>>() }));
-jest.mock('expo-crypto', () => ({ randomUUID: () => 'new-id' }));
+jest.mock('@react-native-async-storage/async-storage', () => ({ getItem: jest.fn<() => Promise<string | null>>(), setItem: jest.fn<() => Promise<void>>(), removeItem: jest.fn<() => Promise<void>>(), getAllKeys: jest.fn<() => Promise<string[]>>(), multiGet: jest.fn<() => Promise<[string, string | null][]>>() }));
+jest.mock('expo-crypto', () => ({ randomUUID: () => 'new-id', CryptoDigestAlgorithm: { SHA256: 'sha256' }, digestStringAsync: async (_algorithm: string, value: string) => require('crypto').createHash('sha256').update(value).digest('hex') }));
+let mockJournalOwner = 'guest-a';
 const mockDeleteFile = jest.fn();
 jest.mock('expo-file-system', () => ({ File: class { exists = true; size = 1000; type = 'audio/mp4'; uri: string; constructor(...parts: unknown[]) { this.uri = parts.join('/'); } delete() { mockDeleteFile(this.uri); } }, Paths: { cache: 'file:///cache/' } }));
 jest.mock('expo-file-system/legacy', () => ({ documentDirectory: 'file:///documents/' }));
 jest.mock('expo/fetch', () => ({ fetch: jest.fn<typeof fetch>() }));
-jest.mock('../auth-client', () => ({ API_URL: 'https://thedreamer.app', authenticatedHeaders: async () => ({ Authorization: 'session' }), getCurrentUser: () => ({ id: 'guest-a' }) }));
-jest.mock('../api', () => ({ apiRequest: jest.fn<(...args: unknown[]) => Promise<unknown>>() }));
+jest.mock('../auth-client', () => ({ API_URL: 'https://thedreamer.app', authenticatedHeaders: async () => ({ Authorization: 'session' }), getCurrentUser: () => ({ id: mockJournalOwner }) }));
+jest.mock('../api', () => ({ apiRequest: jest.fn<(...args: unknown[]) => Promise<unknown>>(), ApiError: class ApiError extends Error { status: number; constructor(message: string, status: number) { super(message); this.status = status; } } }));
 const api = jest.mocked(apiRequest) as unknown as jest.Mock<(...args: unknown[]) => Promise<unknown>>;
 const sample = (changes: Partial<Journal> = {}): Journal => ({ id: 'dream-a', user_id: 'guest-a', transcript: 'Flying over the water', original_text: 'Flying over the water', dream_date: '2026-10-08', created_at: '2026-10-08T01:00:00.000Z', updated_at: '2026-10-08T01:00:00.000Z', sync_status: 'synced', processing_status: 'idle', ...changes });
 function resolveSave(path: unknown, options: unknown) {
-  if ((options as RequestInit)?.method === 'PUT') return Promise.resolve({ dream: { ...JSON.parse((options as RequestInit).body as string), processing_status: 'idle' } });
+  if ((options as RequestInit)?.method === 'PUT') return Promise.resolve({ dream: { ...JSON.parse((options as RequestInit).body as string), user_id: mockJournalOwner, processing_status: 'idle' } });
   return Promise.resolve({ dreams: [] });
 }
 async function until(check: () => boolean) { for (let index = 0; index < 40; index++) { if (check()) return; await Promise.resolve(); } throw new Error('Expected async boundary was not reached'); }
 beforeEach(async () => {
-  jest.mocked(AsyncStorage.getItem).mockResolvedValue(null); jest.mocked(AsyncStorage.setItem).mockResolvedValue(undefined);
+  queryClient.setQueryDefaults(['account'], { gcTime: Infinity });
+  queryClient.clear();
+  mockJournalOwner = 'guest-a';
+  jest.mocked(AsyncStorage.getItem).mockResolvedValue(null); jest.mocked(AsyncStorage.setItem).mockResolvedValue(undefined); jest.mocked(AsyncStorage.removeItem).mockResolvedValue(undefined); jest.mocked(AsyncStorage.getAllKeys).mockResolvedValue([]); jest.mocked(AsyncStorage.multiGet).mockResolvedValue([]);
   await hydrateJournal(); await syncJournal();
   jest.clearAllMocks();
-  useJournalStore.setState({ entries: [], deleted: [], hydrated: true, syncing: false, error: undefined });
+  useJournalStore.setState({ entries: [], deleted: [], hydrated: true, syncing: false, error: undefined, cursors: {}, retiredOwners: [] });
   api.mockImplementation(resolveSave);
   jest.mocked(expoFetch).mockResolvedValue({ ok: true, json: async () => ({ audio_key: 'audio-a' }) } as Awaited<ReturnType<typeof expoFetch>>);
 });
-afterEach(async () => { await syncJournal(); });
+afterEach(async () => { await syncJournal(); queryClient.clear(); });
 it('saves locally and returns successfully when the backend is offline', async () => {
   api.mockRejectedValue(new TypeError('Failed to fetch'));
   const entry = await saveDream({ id: 'dream-a', transcript: 'Keep this dream', dream_date: '2026-10-07' });
   expect(entry.id).toBe('dream-a');
-  expect(AsyncStorage.setItem).toHaveBeenCalledWith('dreamer-journal-v1', expect.stringContaining('Keep this dream'));
+  expect(AsyncStorage.setItem).toHaveBeenCalledWith(expect.stringContaining('dreamer-journal-v2:entry:'), expect.stringContaining('Keep this dream'));
   await syncJournal();
   expect(useJournalStore.getState().entries[0]).toMatchObject({ transcript: 'Keep this dream', sync_status: 'error' });
   expect(useJournalStore.getState().entries[0].last_error).toContain('saved on this device');
@@ -49,11 +54,11 @@ it('a failed local save keeps its capture draft and never starts sync', async ()
 });
 it('retains local audio after an interrupted upload and retries against the same entry', async () => {
   jest.mocked(expoFetch).mockRejectedValueOnce(new TypeError('Network request failed'));
-  await saveDream({ id: 'dream-a', transcript: '', local_audio_uri: 'file:///documents/dream-a.m4a' });
+  await saveDream({ id: 'dream-a', transcript: '', local_audio_uri: 'file:///documents/dreamer-recordings/dream-a.m4a' });
   await syncJournal();
-  expect(useJournalStore.getState().entries[0]).toMatchObject({ id: 'dream-a', sync_status: 'error', local_audio_uri: 'file:///documents/dream-a.m4a' });
+  expect(useJournalStore.getState().entries[0]).toMatchObject({ id: 'dream-a', sync_status: 'error', local_audio_uri: 'file:///documents/dreamer-recordings/dream-a.m4a' });
   await retryDream('dream-a');
-  expect(useJournalStore.getState().entries[0]).toMatchObject({ id: 'dream-a', sync_status: 'synced', audio_key: 'audio-a', local_audio_uri: 'file:///documents/dream-a.m4a' });
+  expect(useJournalStore.getState().entries[0]).toMatchObject({ id: 'dream-a', sync_status: 'synced', audio_key: 'audio-a', local_audio_uri: 'file:///documents/dreamer-recordings/dream-a.m4a' });
   expect(jest.mocked(expoFetch).mock.calls.every(call => String(call[0]).endsWith('/v1/dreams/dream-a/audio'))).toBe(true);
 });
 it('queues a newer edit during in-flight sync without overwriting it', async () => {
@@ -63,7 +68,7 @@ it('queues a newer edit during in-flight sync without overwriting it', async () 
   await until(() => api.mock.calls.length === 1);
   const old = JSON.parse((api.mock.calls[0][1] as RequestInit).body as string);
   await updateDream('dream-a', { transcript: 'Corrected entry', title: 'Corrected title' });
-  resolveFirst({ dream: { ...old, processing_status: 'idle' } });
+  resolveFirst({ dream: { ...old, user_id: mockJournalOwner, processing_status: 'idle' } });
   await syncJournal();
   expect(useJournalStore.getState().entries[0]).toMatchObject({ transcript: 'Corrected entry', title: 'Corrected title', original_text: 'Original entry', sync_status: 'synced' });
   expect(api.mock.calls.filter(call => (call[1] as RequestInit)?.method === 'PUT')).toHaveLength(2);
@@ -102,7 +107,7 @@ it('acknowledged deletion tombstones block stale GET responses from resurrecting
   let resolveGet!: (result: unknown) => void;
   api.mockImplementation((path, options) => (options as RequestInit)?.method === 'DELETE' ? Promise.resolve({ deleted: true }) as ReturnType<typeof apiRequest> : new Promise(resolve => { resolveGet = resolve; }) as ReturnType<typeof apiRequest>);
   const refreshing = refreshDreams();
-  await until(() => api.mock.calls.some(call => call[0] === '/v1/dreams'));
+  await until(() => api.mock.calls.some(call => String(call[0]).startsWith('/v1/dreams/sync?')));
   await deleteDream('dream-a'); await syncJournal();
   resolveGet({ dreams: [sample()] }); await refreshing;
   expect(useJournalStore.getState().entries).toHaveLength(0);
@@ -112,11 +117,11 @@ it('restores interrupted sync and processing with a restart action and preserved
   let isolated!: typeof import('../journal');
   jest.isolateModules(() => {
     const storage = jest.requireMock('@react-native-async-storage/async-storage') as typeof AsyncStorage;
-    jest.mocked(storage.getItem).mockResolvedValue(JSON.stringify({ entries: [sample({ sync_status: 'syncing', processing_status: 'processing', local_audio_uri: 'file:///documents/kept.m4a' })], deleted: [] }));
+    jest.mocked(storage.getItem).mockImplementation(async key => key === 'dreamer-journal-v1' ? JSON.stringify({ entries: [sample({ sync_status: 'syncing', processing_status: 'processing', local_audio_uri: 'file:///documents/dreamer-recordings/kept.m4a' })], deleted: [] }) : null);
     isolated = jest.requireActual('../journal') as typeof import('../journal');
   });
   await isolated.hydrateJournal();
-  expect(isolated.useJournalStore.getState().entries[0]).toMatchObject({ sync_status: 'local', processing_status: 'error', local_audio_uri: 'file:///documents/kept.m4a' });
+  expect(isolated.useJournalStore.getState().entries[0]).toMatchObject({ sync_status: 'local', processing_status: 'error', local_audio_uri: 'file:///documents/dreamer-recordings/kept.m4a' });
   expect(isolated.useJournalStore.getState().entries[0].last_error).toContain('tap Restart');
 });
 it('retains unreadable saved data and allows hydration to retry', async () => {
@@ -124,23 +129,23 @@ it('retains unreadable saved data and allows hydration to retry', async () => {
   let storage!: typeof AsyncStorage;
   jest.isolateModules(() => {
     storage = jest.requireMock('@react-native-async-storage/async-storage') as typeof AsyncStorage;
-    jest.mocked(storage.getItem).mockResolvedValue('{broken saved journal');
+    jest.mocked(storage.getItem).mockImplementation(async key => key === 'dreamer-journal-v1' ? '{broken saved journal' : null);
     isolated = jest.requireActual('../journal') as typeof import('../journal');
   });
   await expect(isolated.hydrateJournal()).rejects.toThrow('data has been retained');
   expect(storage.setItem).not.toHaveBeenCalled();
   expect(isolated.useJournalStore.getState().hydrated).toBe(false);
-  jest.mocked(storage.getItem).mockResolvedValue(JSON.stringify({ entries: [sample()], deleted: [] }));
+  jest.mocked(storage.getItem).mockImplementation(async key => key === 'dreamer-journal-v1' ? JSON.stringify({ entries: [sample()], deleted: [] }) : null);
   await isolated.hydrateJournal();
   expect(isolated.useJournalStore.getState().entries[0].transcript).toBe('Flying over the water');
 });
 
 it('deleting offline cleans audio only after persisting a durable tombstone', async () => {
-  useJournalStore.setState({ entries: [sample({ local_audio_uri: 'file:///documents/dream-a.m4a' })] });
+  useJournalStore.setState({ entries: [sample({ local_audio_uri: 'file:///documents/dreamer-recordings/dream-a.m4a' })] });
   api.mockRejectedValue(new TypeError('Failed to fetch'));
   await deleteDream('dream-a'); await syncJournal();
-  expect(AsyncStorage.setItem).toHaveBeenCalledWith('dreamer-journal-v1', expect.stringContaining('cleanupPending'));
-  expect(mockDeleteFile).toHaveBeenCalledWith('file:///documents/dream-a.m4a');
+  expect(AsyncStorage.setItem).toHaveBeenCalledWith(expect.stringContaining('dreamer-journal-v2:deleted:'), expect.stringContaining('cleanupPending'));
+  expect(mockDeleteFile).toHaveBeenCalledWith('file:///documents/dreamer-recordings/dream-a.m4a');
   expect(useJournalStore.getState().entries).toHaveLength(0);
   expect(useJournalStore.getState().deleted[0]).toMatchObject({ id: 'dream-a', cleanupPending: false });
   expect(useJournalStore.getState().deleted[0].synced).not.toBe(true);
@@ -154,26 +159,104 @@ it('preserves the premium-required API error so the purchase handoff can resume 
   expect(useJournalStore.getState().entries[0]).toMatchObject({ processing_status: 'error', last_error: 'Premium is required' });
 });
 it('account cleanup preserves every other owner, tombstone and referenced recording', async () => {
-  useJournalStore.setState({ entries: [sample({ id: 'deleted-dream', user_id: 'deleted-owner', local_audio_uri: 'file:///documents/deleted.m4a' }), sample({ id: 'kept-dream', user_id: 'other-owner', local_audio_uri: 'file:///documents/kept.m4a' })], deleted: [{ id: 'deleted-old', user_id: 'deleted-owner', local_audio_uri: 'file:///documents/shared.m4a' }, { id: 'kept-old', user_id: 'other-owner', local_audio_uri: 'file:///documents/shared.m4a', synced: false }] });
+  useJournalStore.setState({ entries: [sample({ id: 'deleted-dream', user_id: 'deleted-owner', local_audio_uri: 'file:///documents/dreamer-recordings/deleted.m4a' }), sample({ id: 'kept-dream', user_id: 'other-owner', local_audio_uri: 'file:///documents/dreamer-recordings/kept.m4a' })], deleted: [{ id: 'deleted-old', user_id: 'deleted-owner', local_audio_uri: 'file:///documents/dreamer-recordings/shared.m4a' }, { id: 'kept-old', user_id: 'other-owner', local_audio_uri: 'file:///documents/dreamer-recordings/shared.m4a', synced: false }] });
   await beginAccountDeletion('deleted-owner');
   await clearDeletedAccountJournal('deleted-owner');
   expect(useJournalStore.getState().entries.map(entry => entry.id)).toEqual(['kept-dream']);
-  expect(useJournalStore.getState().deleted).toEqual([{ id: 'kept-old', user_id: 'other-owner', local_audio_uri: 'file:///documents/shared.m4a', synced: false }]);
+  expect(useJournalStore.getState().deleted).toEqual([{ id: 'kept-old', user_id: 'other-owner', local_audio_uri: 'file:///documents/dreamer-recordings/shared.m4a', synced: false }]);
   expect(useJournalStore.getState().retiredOwners).toContain('deleted-owner');
-  expect(mockDeleteFile).toHaveBeenCalledWith('file:///documents/deleted.m4a');
-  expect(mockDeleteFile).not.toHaveBeenCalledWith('file:///documents/kept.m4a');
-  expect(mockDeleteFile).not.toHaveBeenCalledWith('file:///documents/shared.m4a');
-  expect(AsyncStorage.setItem).toHaveBeenCalledWith('dreamer-journal-v1', expect.stringContaining('retiredOwners'));
+  expect(mockDeleteFile).toHaveBeenCalledWith('file:///documents/dreamer-recordings/deleted.m4a');
+  expect(mockDeleteFile).not.toHaveBeenCalledWith('file:///documents/dreamer-recordings/kept.m4a');
+  expect(mockDeleteFile).not.toHaveBeenCalledWith('file:///documents/dreamer-recordings/shared.m4a');
+  expect(AsyncStorage.setItem).toHaveBeenCalledWith('dreamer-journal-v2:meta', expect.stringContaining('retiredOwners'));
 });
 it('a delayed refresh cannot resurrect a server-deleted account’s journal', async () => {
   useJournalStore.setState({ entries: [sample({ id: 'retired-dream', user_id: 'retired-owner' })] });
   let resolveGet!: (result: unknown) => void;
   api.mockImplementation(() => new Promise(resolve => { resolveGet = resolve; }) as ReturnType<typeof apiRequest>);
   const refreshing = refreshDreams();
-  await until(() => api.mock.calls.some(call => call[0] === '/v1/dreams'));
+  await until(() => api.mock.calls.some(call => String(call[0]).startsWith('/v1/dreams/sync?')));
   await beginAccountDeletion('retired-owner');
   await clearDeletedAccountJournal('retired-owner');
   resolveGet({ dreams: [sample({ id: 'retired-dream', user_id: 'retired-owner' })] });
   await refreshing;
   expect(useJournalStore.getState().entries).toHaveLength(0);
+});
+
+it('reloads queued entries before uploading so editing B while A syncs cannot erase B', async () => {
+  useJournalStore.setState({ entries: [sample({ id: 'dream-a', sync_status: 'local' }), sample({ id: 'dream-b', transcript: 'Old B', sync_status: 'local' })] });
+  let finishA!: (result: unknown) => void;
+  api.mockImplementationOnce(() => new Promise(resolve => { finishA = resolve; }));
+  const pending = syncJournal();
+  await until(() => api.mock.calls.length === 1);
+  await updateDream('dream-b', { transcript: 'New B' });
+  finishA({ dream: sample() }); await pending;
+  expect(useJournalStore.getState().entries.find(entry => entry.id === 'dream-b')).toMatchObject({ transcript: 'New B', sync_status: 'synced' });
+  const putB = api.mock.calls.find(call => call[0] === '/v1/dreams/dream-b');
+  expect(JSON.parse((putB![1] as RequestInit).body as string).transcript).toBe('New B');
+});
+it('rejects a stale refresh after the newer manual edit has already synced', async () => {
+  useJournalStore.setState({ entries: [sample()] });
+  let finishGet!: (result: unknown) => void;
+  api.mockImplementation((path, options) => String(path).startsWith('/v1/dreams/sync?') ? new Promise(resolve => { finishGet = resolve; }) : resolveSave(path, options));
+  const refreshing = refreshDreams(); await until(() => Boolean(finishGet));
+  await updateDream('dream-a', { transcript: 'New synced text' }); await syncJournal();
+  finishGet({ dreams: [sample()], deleted: [], next_cursor: null, sync_cursor: '1' }); await refreshing;
+  expect(useJournalStore.getState().entries[0]).toMatchObject({ transcript: 'New synced text', sync_status: 'synced' });
+});
+it('rejects delayed requests after an account change, including returning to the same account', async () => {
+  useJournalStore.setState({ entries: [sample()] });
+  let finishGet!: (result: unknown) => void;
+  api.mockImplementation(() => new Promise(resolve => { finishGet = resolve; }));
+  const refreshing = refreshDreams(); await until(() => Boolean(finishGet));
+  mockJournalOwner = 'guest-b'; invalidateJournalRequests();
+  mockJournalOwner = 'guest-a'; invalidateJournalRequests();
+  finishGet({ dreams: [sample({ transcript: 'Stale session result' })], deleted: [], next_cursor: null, sync_cursor: '2' }); await refreshing;
+  expect(useJournalStore.getState().entries[0].transcript).toBe('Flying over the water');
+  expect(useJournalStore.getState().cursors['guest-a']).toBeUndefined();
+});
+it('consumes deletion pages and advances the checkpoint only after the final page', async () => {
+  useJournalStore.setState({ entries: [sample()], cursors: { 'guest-a': '2' } });
+  let finishPage!: (result: unknown) => void;
+  api.mockResolvedValueOnce({ dreams: [], deleted: [{ id: 'dream-a', user_id: 'guest-a', deleted_at: '2026-10-09T01:00:00.000Z', sync_version: 3 }], next_cursor: '3', sync_cursor: '5' });
+  api.mockImplementationOnce(() => new Promise(resolve => { finishPage = resolve; }));
+  const refreshing = refreshDreams(); await until(() => Boolean(finishPage));
+  expect(useJournalStore.getState().entries).toHaveLength(0);
+  expect(useJournalStore.getState().cursors['guest-a']).toBe('2');
+  expect(String(api.mock.calls[1][0])).toContain('cursor=3'); expect(String(api.mock.calls[1][0])).toContain('until=5');
+  finishPage({ dreams: [sample({ id: 'dream-b', sync_version: 5 })], deleted: [], next_cursor: null, sync_cursor: '5' }); await refreshing;
+  expect(useJournalStore.getState().entries.map(entry => entry.id)).toEqual(['dream-b']);
+  expect(useJournalStore.getState().cursors['guest-a']).toBe('5');
+});
+it('falls back to an old backend without treating an incomplete list as deletion', async () => {
+  useJournalStore.setState({ entries: [sample()] });
+  api.mockRejectedValueOnce(Object.assign(new Error('Missing sync endpoint'), { status: 404 }));
+  api.mockResolvedValueOnce({ dreams: [] });
+  await refreshDreams();
+  expect(api.mock.calls[1][0]).toBe('/v1/dreams');
+  expect(useJournalStore.getState().entries).toHaveLength(1);
+  expect(useJournalStore.getState().cursors['guest-a']).toBeUndefined();
+});
+it('cannot mutate another account’s entry or accept another owner’s response', async () => {
+  useJournalStore.setState({ entries: [sample({ user_id: 'other-owner' })] });
+  await expect(updateDream('dream-a', { transcript: 'Overwrite' })).rejects.toThrow('current journal');
+  await expect(deleteDream('dream-a')).rejects.toThrow('current journal');
+  api.mockResolvedValue({ dreams: [sample({ user_id: 'other-owner', transcript: 'Cloud overwrite' })], deleted: [], next_cursor: null, sync_cursor: '4' });
+  await refreshDreams();
+  expect(useJournalStore.getState().entries[0].transcript).toBe('Flying over the water');
+  expect(useJournalStore.getState().error).toContain('another journal');
+});
+it('only moves device entries on ordinary session reconnect', async () => {
+  useJournalStore.setState({ entries: [sample({ id: 'previous', user_id: 'old-owner' }), sample({ id: 'device', user_id: 'device' })] });
+  await rebindJournalOwner('old-owner', 'guest-a');
+  expect(useJournalStore.getState().entries.find(entry => entry.id === 'previous')?.user_id).toBe('old-owner');
+  expect(useJournalStore.getState().entries.find(entry => entry.id === 'device')?.user_id).toBe('guest-a');
+  await rebindJournalOwner('old-owner', 'guest-a', true);
+  expect(useJournalStore.getState().entries.find(entry => entry.id === 'previous')?.user_id).toBe('guest-a');
+});
+it('sends only writable API fields instead of local URIs and sync state', async () => {
+  await saveDream({ id: 'dream-a', transcript: 'My dream', local_audio_uri: 'file:///documents/dreamer-recordings/dream-a.m4a' }); await syncJournal();
+  const put = api.mock.calls.find(call => (call[1] as RequestInit)?.method === 'PUT')!;
+  const input = JSON.parse((put[1] as RequestInit).body as string);
+  expect(input.local_audio_uri).toBeUndefined(); expect(input.user_id).toBeUndefined(); expect(input.sync_status).toBeUndefined(); expect(input.processing_status).toBeUndefined();
 });

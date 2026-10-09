@@ -1,5 +1,5 @@
 import { MotionPressable, MotionReveal, useMotionPreference } from '@/components/motion/Motion';
-import { useState } from 'react';
+import { useDeferredValue, useState } from 'react';
 import { Keyboard, Modal, ScrollView, SectionList, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -24,6 +24,7 @@ function SearchContent({ initialTheme }: { initialTheme?: string }) {
   const reduced = useMotionPreference();
   const { entries, hydrated, syncing, error, refresh, bottomSpace } = useDreamJournal();
   const [query, setQuery] = useState('');
+  const deferredQuery = useDeferredValue(query);
   const [scope, setScope] = useState<SearchScope>('all');
   const [theme, setTheme] = useState<string | undefined>(initialTheme);
   const [sort, setSort] = useState<DreamSort>('newest');
@@ -36,7 +37,7 @@ function SearchContent({ initialTheme }: { initialTheme?: string }) {
   const [themesOpen, setThemesOpen] = useState(false);
   const today = localDateKey(new Date());
   const from = period === 'week' ? localDateKey(new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate() - 6)) : period === 'month' ? `${today.slice(0, 7)}-01` : period === 'year' ? `${today.slice(0, 4)}-01-01` : undefined;
-  const matching = filterDreams(entries, { query, scope, tag: theme, favorites, sort, from, to: from ? today : undefined });
+  const matching = filterDreams(entries, { query: deferredQuery, scope, tag: theme, favorites, sort, from, to: from ? today : undefined });
   const results = date ? matching.filter(entry => dreamDateKey(entry) === date) : calendar ? matching.filter(entry => dreamDateKey(entry).startsWith(calendarMonth)) : matching;
   const themes = journalThemes(entries);
   const sections = dreamSections(results);
@@ -47,7 +48,7 @@ function SearchContent({ initialTheme }: { initialTheme?: string }) {
   const toggleCalendar = () => { Keyboard.dismiss(); if (!calendar) setCalendarMonth(date?.slice(0, 7) || today.slice(0, 7)); else setDate(undefined); setCalendar(!calendar); };
   const choice = (label: string, selected: boolean, onPress: () => void, expand: boolean | 'half' = false) => <MotionPressable key={label} haptic="selection" accessibilityRole="button" accessibilityState={{ selected }} onPress={onPress} style={[s.choice, expand && (fontScale > (expand === 'half' ? 1.8 : 1.3) ? { width: '100%' } : { flex: 1 }), { backgroundColor: selected ? c.accentSoft : c.background, borderColor: selected ? c.accentSoft : c.border }]}><Text style={[s.choiceText, { color: selected ? c.accent : c.muted }]}>{label}</Text></MotionPressable>;
   return <SafeAreaView edges={['top', 'left', 'right']} style={{ flex: 1, backgroundColor: c.background }}>
-    <MotionReveal style={{ flex: 1 }}><SectionList key={fontScale} sections={sections} keyExtractor={item => item.id} renderItem={({ item }) => <DreamListItem dream={item} query={query} scope={scope} />} renderSectionHeader={({ section }) => <Text accessibilityRole="header" style={[pageStyles.month, { color: c.muted }]}>{section.title}</Text>} stickySectionHeadersEnabled={false} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" showsVerticalScrollIndicator={false} refreshing={syncing} onRefresh={refresh} contentContainerStyle={[pageStyles.content, { paddingBottom: bottomSpace }]} ListHeaderComponent={<>
+    <MotionReveal style={{ flex: 1 }}><SectionList key={fontScale} sections={sections} keyExtractor={item => item.id} renderItem={({ item }) => <DreamListItem dream={item} query={deferredQuery} scope={scope} />} renderSectionHeader={({ section }) => <Text accessibilityRole="header" style={[pageStyles.month, { color: c.muted }]}>{section.title}</Text>} stickySectionHeadersEnabled={false} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" showsVerticalScrollIndicator={false} refreshing={syncing} onRefresh={refresh} contentContainerStyle={[pageStyles.content, { paddingBottom: bottomSpace }]} ListHeaderComponent={<>
       <PageHeader title="Search" action="none" />
       <View style={[s.search, { backgroundColor: c.surface, borderColor: c.border }]}>
         <Ionicons accessible={false} name="search-outline" size={21} color={c.accent} />

@@ -11,10 +11,12 @@ import { saveDreamWithoutAI } from '@/util/processDream';
 import DreamAudioPlayer from './DreamAudioPlayer';
 import { useJournalColors } from './journal/theme';
 import { stopRecordingPlayback } from '@/util/audio-playback';
+import { useAuth } from '@/contexts/AuthProvider';
 
 type Props = { openBottomSheet: () => void };
 export default function JournalEditor({ openBottomSheet }: Props) {
   const { draft, hydrated, persistenceError } = useCaptureDraft();
+  const { user } = useAuth();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -25,7 +27,7 @@ export default function JournalEditor({ openBottomSheet }: Props) {
   const ink = colors.ink;
   const muted = colors.muted;
   const card = colors.surface;
-  useEffect(() => { void hydrateDraft(); }, []);
+  useEffect(() => { void hydrateDraft().catch(() => undefined); }, []);
   async function handleSave() {
     if (saveBusy.current || !draft) return;
     if (!draft.text.trim() && !draft.audioUri) { setError('Write a few words or keep a recording before saving.'); haptic('error'); return; }
@@ -49,7 +51,8 @@ export default function JournalEditor({ openBottomSheet }: Props) {
     if (!draft) return;
     Alert.alert('Remove this recording?', 'Your written dream stays in the draft.', [{ text: 'Keep', style: 'cancel' }, { text: 'Remove audio', style: 'destructive', onPress: () => { stopRecordingPlayback(); void discardDraftRecording(draft.id).catch(() => setError('Could not remove audio. Please try again.')); } }]);
   }
-  if (!hydrated || !draft) return <View style={styles.loading}><ActivityIndicator color={colors.accent} /><Text style={{ color: muted }}>Restoring your draft…</Text></View>;
+  if (!hydrated || !draft) return <View style={styles.loading}>{persistenceError ? <><Text accessibilityRole="alert" style={{ color: muted }}>{persistenceError}</Text><MotionPressable accessibilityRole="button" onPress={() => { void hydrateDraft().catch(() => undefined); }} style={[styles.save, { backgroundColor: colors.accent }]}><Text style={styles.saveText}>Retry restoring draft</Text></MotionPressable></> : <><ActivityIndicator color={colors.accent} /><Text style={{ color: muted }}>Restoring your draft…</Text></>}</View>;
+  if (draft.ownerId && draft.ownerId !== 'device' && draft.ownerId !== user?.id) return <View style={styles.loading}><ActivityIndicator color={colors.accent} /><Text style={{ color: muted }}>Opening your current draft…</Text></View>;
   const selectedDate = new Date(`${draft.dreamDate}T12:00:00`);
   const canSave = Boolean(draft.text.trim() || draft.audioUri);
   return <MotionReveal key={fontScale} style={{ flex: 1 }}>
@@ -58,9 +61,9 @@ export default function JournalEditor({ openBottomSheet }: Props) {
       <MotionPressable accessibilityRole="button" accessibilityLabel="Choose dream date" onPress={() => setShowDatePicker(true)} style={[styles.date, { backgroundColor: card }]}>
         <View style={[styles.row, { flex: 1 }]}><Feather accessible={false} name="calendar" size={20} color={colors.accent} /><View style={{ flex: 1 }}><Text style={[styles.caption, { color: muted }]}>Dream date</Text><Text style={[styles.dateText, { color: ink }]}>{selectedDate.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' })}</Text></View></View><Feather accessible={false} name="chevron-down" size={18} color={muted} />
       </MotionPressable>
-      <DatePickerModal isVisible={showDatePicker} onClose={() => setShowDatePicker(false)} selectedDate={selectedDate} onDateChange={date => { if (Platform.OS === 'android') setShowDatePicker(false); void updateDraft({ dreamDate: localDreamDate(date) }).catch(() => undefined); }} maximumDate={new Date()} />
+      <DatePickerModal isVisible={showDatePicker} onClose={() => setShowDatePicker(false)} selectedDate={selectedDate} onDateChange={date => { if (Platform.OS === 'android') setShowDatePicker(false); void updateDraft({ dreamDate: localDreamDate(date) }, draft.id).catch(() => undefined); }} maximumDate={new Date()} />
       <View style={[styles.paper, { backgroundColor: card }]}>
-        <TextInput accessibilityLabel="Your dream" multiline textAlignVertical="top" value={draft.text} onChangeText={text => { setError(null); void updateDraft({ text }).catch(() => undefined); }} editable={!saving}
+        <TextInput accessibilityLabel="Your dream" multiline textAlignVertical="top" value={draft.text} onChangeText={text => { setError(null); void updateDraft({ text }, draft.id).catch(() => undefined); }} editable={!saving}
           placeholder="I remember…" placeholderTextColor={colors.muted} style={[styles.input, { color: ink }]} />
         <View style={styles.draftStatus}><Feather accessible={false} name={persistenceError ? 'alert-circle' : 'check-circle'} size={13} color={persistenceError ? '#C75B72' : '#8E6CD0'} /><Text style={[styles.draftLabel, { color: muted }]}>{persistenceError ? 'Draft needs attention' : 'Draft saved'}</Text></View>
       </View>

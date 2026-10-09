@@ -13,5 +13,5 @@
   "send_email": [{"name":"EMAIL","allowed_sender_addresses":["hello@thedreamer.app"]}],
   "vars": {"AUTH_BASE_URL":"https://api.thedreamer.app","ALLOWED_ORIGINS":"https://thedreamer.app,https://www.thedreamer.app","EMAIL_FROM":"hello@thedreamer.app","REVENUECAT_ENTITLEMENT":"pro","REVENUECAT_PROJECT_ID":"50f990d7","REVENUECAT_ENTITLEMENT_ID":"entl647fbfef6e","FREE_AI_LIMIT":"3"},
   "triggers":{"crons":["0 * * * *"]},
-  "observability":{"enabled":false}
+  "observability":{"enabled":true,"logs":{"enabled":true,"invocation_logs":false},"traces":{"enabled":false}}
 }

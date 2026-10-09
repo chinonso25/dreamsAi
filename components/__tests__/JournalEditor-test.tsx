@@ -1,0 +1,38 @@
+import React from 'react';
+import renderer, { act } from 'react-test-renderer';
+import { beforeEach, expect, it, jest } from '@jest/globals';
+import { hydrateDraft } from '@/util/drafts';
+import JournalEditor from '../JournalEditor';
+const mockDraft = { id: 'private-draft', ownerId: 'email-a', text: 'Private old account text', dreamDate: '2026-10-09', recordingState: 'idle' };
+let mockState: { draft: typeof mockDraft | null; hydrated: boolean; persistenceError: string | null };
+let mockOwner: string;
+jest.mock('@/contexts/AuthProvider', () => ({ useAuth: () => ({ user: { id: mockOwner } }) }));
+jest.mock('@/util/drafts', () => ({ useCaptureDraft: () => mockState, hydrateDraft: jest.fn<() => Promise<void>>() }));
+jest.mock('@/util/journal', () => ({ saveDream: jest.fn() }));
+jest.mock('@/util/audio-playback', () => ({ stopRecordingPlayback: jest.fn() }));
+jest.mock('@/util/haptics', () => ({ haptic: jest.fn() }));
+jest.mock('@/components/motion/Motion', () => { const { Pressable, View } = jest.requireActual<typeof import('react-native')>('react-native'); return { MotionPressable: Pressable, MotionReveal: View }; });
+jest.mock('expo-router', () => ({ useRouter: () => ({ replace: jest.fn() }) }));
+jest.mock('../DatePickerModal', () => ({ DatePickerModal: () => null }));
+jest.mock('../DreamAudioPlayer', () => ({ __esModule: true, default: () => null }));
+jest.mock('../journal/theme', () => ({ useJournalColors: () => ({ ink: '#111', muted: '#888', accent: '#777', surface: '#fff' }) }));
+beforeEach(() => { jest.clearAllMocks(); mockOwner = 'email-a'; mockState = { draft: null, hydrated: false, persistenceError: 'Data retained. Retry to restore.' }; jest.mocked(hydrateDraft).mockRejectedValue(new Error('Disk unavailable')); });
+it('offers retry on failed hydration and handles the rejected retry promise', async () => {
+  let tree!: renderer.ReactTestRenderer;
+  await act(async () => { tree = renderer.create(<JournalEditor openBottomSheet={() => {}} />); });
+  const retry = tree.root.findAll(node => node.props.accessibilityRole === 'button' && typeof node.props.onPress === 'function')[0];
+  expect(retry).toBeDefined();
+  await act(async () => { retry.props.onPress(); });
+  expect(hydrateDraft).toHaveBeenCalledTimes(2);
+  expect(JSON.stringify(tree.toJSON())).toContain('Retry restoring draft');
+  await act(async () => { tree.unmount(); });
+});
+it('does not display a retained draft belonging to another current account', async () => {
+  mockState = { draft: mockDraft, hydrated: true, persistenceError: null }; mockOwner = 'email-b';
+  let tree!: renderer.ReactTestRenderer;
+  await act(async () => { tree = renderer.create(<JournalEditor openBottomSheet={() => {}} />); });
+  const output = JSON.stringify(tree.toJSON());
+  expect(output).toContain('Opening your current draft');
+  expect(output).not.toContain('Private old account text');
+  await act(async () => { tree.unmount(); });
+});

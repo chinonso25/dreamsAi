@@ -11,6 +11,7 @@
     "migrate:remote": "wrangler d1 migrations apply dreamer-journal --remote"
   },
   "dependencies": {
+    "@better-auth/core": "1.7.7",
     "better-auth": "1.7.7",
     "kysely": "^0.29.6",
     "kysely-d1": "0.4.0",

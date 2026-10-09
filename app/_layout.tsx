@@ -6,15 +6,11 @@ import "react-native-reanimated";
 
 import {
   useFonts,
-  Outfit_100Thin,
-  Outfit_200ExtraLight,
   Outfit_300Light,
   Outfit_400Regular,
   Outfit_500Medium,
   Outfit_600SemiBold,
   Outfit_700Bold,
-  Outfit_800ExtraBold,
-  Outfit_900Black,
 } from "@expo-google-fonts/outfit";
 import { ContextWrapper } from "@/contexts/ContextWrappers";
 
@@ -22,16 +18,11 @@ SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const [loaded, fontError] = useFonts({
-    SpaceMono: require("../assets/fonts/SpaceMono-Regular.ttf"),
-    Outfit_100Thin,
-    Outfit_200ExtraLight,
     Outfit_300Light,
     Outfit_400Regular,
     Outfit_500Medium,
     Outfit_600SemiBold,
     Outfit_700Bold,
-    Outfit_800ExtraBold,
-    Outfit_900Black,
   });
 
   useEffect(() => {
