@@ -5,7 +5,7 @@ import { parseDreamDTO } from '../shared/dream-contract';
 const LEGACY_KEY = 'dreamer-journal-v1';
 const PREFIX = 'dreamer-journal-v2:';
 const META_KEY = `${PREFIX}meta`;
-export type JournalDeletion = { id: string; user_id: string; synced?: boolean; local_audio_uri?: string; cleanupPending?: boolean; sync_version?: number };
+export type JournalDeletion = { id: string; user_id: string; synced?: boolean; local_audio_uri?: string; cleanupPending?: boolean; sync_version?: number; recovery_source?: string };
 export type DurableJournal = { entries: Journal[]; deleted: JournalDeletion[]; retiredOwners: string[]; cursors?: Record<string, string> };
 type Meta = { version: 2; retiredOwners: string[]; cursors: Record<string, string> };
 let writes = Promise.resolve();
@@ -15,7 +15,7 @@ const keyFor = (kind: 'entry' | 'deleted', item: { id: string; user_id: string }
 function parseEntry(value: unknown): Journal {
   const dto = parseDreamDTO(value);
   const raw = value as Record<string, unknown>;
-  if (!['local', 'syncing', 'synced', 'error'].includes(String(raw.sync_status)) || raw.local_audio_uri !== undefined && typeof raw.local_audio_uri !== 'string' || raw.last_error !== undefined && typeof raw.last_error !== 'string') throw new Error('A saved journal record could not be read. Its data has been retained.');
+  if (!['local', 'syncing', 'synced', 'error'].includes(String(raw.sync_status)) || raw.local_audio_uri !== undefined && typeof raw.local_audio_uri !== 'string' || raw.last_error !== undefined && typeof raw.last_error !== 'string' || raw.recovery_source !== undefined && (typeof raw.recovery_source !== 'string' || raw.recovery_source.length > 2048)) throw new Error('A saved journal record could not be read. Its data has been retained.');
   const { error: _error, ...entry } = dto;
   return { ...raw, ...entry, sync_status: raw.sync_status as Journal['sync_status'], local_audio_uri: raw.local_audio_uri as string | undefined, last_error: raw.last_error as string | undefined };
 }
@@ -25,7 +25,8 @@ function parseDeletion(value: unknown): JournalDeletion {
     || row.synced !== undefined && typeof row.synced !== 'boolean'
     || row.cleanupPending !== undefined && typeof row.cleanupPending !== 'boolean'
     || row.local_audio_uri !== undefined && typeof row.local_audio_uri !== 'string'
-    || row.sync_version !== undefined && (!Number.isSafeInteger(row.sync_version) || row.sync_version < 0)) throw new Error('A saved journal deletion could not be read. Its data has been retained.');
+    || row.sync_version !== undefined && (!Number.isSafeInteger(row.sync_version) || row.sync_version < 0)
+    || row.recovery_source !== undefined && (typeof row.recovery_source !== 'string' || row.recovery_source.length > 2048)) throw new Error('A saved journal deletion could not be read. Its data has been retained.');
   return row;
 }
 function check(data: unknown): asserts data is DurableJournal {

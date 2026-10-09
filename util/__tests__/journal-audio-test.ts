@@ -1,13 +1,13 @@
 import { beforeEach, expect, it, jest } from '@jest/globals';
 import { File } from 'expo-file-system';
-import { journalAudioUri, removeJournalAudio, cancelJournalAudio, uploadJournalAudio } from '../journal-audio';
+import { journalAudioUri, removeJournalAudio, cancelJournalAudio, uploadJournalAudio, recoverJournalAudio } from '../journal-audio';
 import type { Journal } from '@/types';
 const mockFiles = new Map<string, number>();
 const mockDownload = jest.fn<(...args: any[]) => Promise<File>>();
 const mockHeaders = jest.fn<(...args: any[]) => Promise<Record<string, string>>>();
 jest.mock('../auth-client', () => ({ API_URL: 'https://test.invalid', authenticatedHeaders: (...args: any[]) => mockHeaders(...args) }));
 jest.mock('expo-crypto', () => ({ randomUUID: () => 'temporary-id', CryptoDigestAlgorithm: { SHA256: 'sha256' }, digestStringAsync: async (_algorithm: string, value: string) => jest.requireActual<typeof import('node:crypto')>('node:crypto').createHash('sha256').update(value).digest('hex') }));
-jest.mock('expo-file-system/legacy', () => ({ documentDirectory: 'file:///documents/' }));
+jest.mock('expo-file-system/legacy', () => ({ documentDirectory: 'file:///documents/', makeDirectoryAsync: jest.fn(async () => undefined) }));
 jest.mock('expo/fetch', () => ({ fetch: jest.fn() }));
 jest.mock('expo-file-system', () => {
   class MockFile {
@@ -17,6 +17,7 @@ jest.mock('expo-file-system', () => {
     get size() { return mockFiles.get(this.uri) || 0; }
     get name() { return this.uri.split('/').at(-1)!; }
     delete() { mockFiles.delete(this.uri); }
+    async copy(destination: MockFile) { mockFiles.set(destination.uri, this.size); }
     async move(destination: MockFile) { const size = this.size; this.delete(); mockFiles.set(destination.uri, size); this.uri = destination.uri; }
     static downloadFileAsync(...args: any[]) { return mockDownload(...args); }
   }
@@ -52,4 +53,14 @@ it('rejects untrusted upload paths and never deletes recordings outside the mana
   const dangerous = 'file:///documents/private.m4a'; mockFiles.set(dangerous, 10);
   await expect(uploadJournalAudio(dream({ audio_key: undefined, local_audio_uri: dangerous }), () => true)).rejects.toThrow('outside');
   await removeJournalAudio({ id: '../../private', user_id: '../owner', local_audio_uri: dangerous }); expect(mockFiles.has(dangerous)).toBe(true);
+});
+
+it('promotes an existing account-scoped cache to managed storage for a recovered new identity', async () => {
+  const original = dream(); const cached = await journalAudioUri(original, () => true);
+  mockHeaders.mockClear(); const audio = await recoverJournalAudio(original, 'new-clone');
+  expect(audio).toEqual({ uri: 'file:///documents/dreamer-recordings/new-clone-recovered.m4a', missing: false });
+  expect(mockFiles.has(cached!)).toBe(true); expect(mockFiles.get(audio.uri!)).toBe(100); expect(mockHeaders).not.toHaveBeenCalled(); expect(mockDownload).toHaveBeenCalledTimes(1);
+});
+it('reports missing audio without trying to download using an expired owner’s session', async () => {
+  expect(await recoverJournalAudio(dream(), 'new-clone')).toEqual({ missing: true }); expect(mockHeaders).not.toHaveBeenCalled(); expect(mockDownload).not.toHaveBeenCalled();
 });

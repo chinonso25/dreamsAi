@@ -123,8 +123,8 @@ export async function completeDraft(draftId: string) {
 }
 export async function flushDraft() { await hydrateDraft(); const draft = useCaptureDraft.getState().draft!; assertCurrentOwner(draft); await persist(draft); return draft; }
 
-/** Only a server-proven guest-to-email link may transfer a previous account’s draft. */
-export async function rebindDraftOwner(previousId: string | undefined, nextId: string, transferPrevious = false) {
+/** Move a live linked guest draft, or copy an explicitly recovered expired guest. */
+export async function rebindDraftOwner(previousId: string | undefined, nextId: string, transferPrevious = false, copyPrevious = false) {
   await hydrateDraft();
   const current = useCaptureDraft.getState().draft!; keep(current);
   const previous = transferPrevious && previousId ? retained.get(ownerKey(previousId)) : undefined;
@@ -132,8 +132,8 @@ export async function rebindDraftOwner(previousId: string | undefined, nextId: s
   const source = previous || unowned;
   const existing = retained.get(nextId);
   // Do not overwrite another retained draft when linking an account with its own capture.
-  const draft = existing || (source ? { ...source, ownerId: nextId } : newDraft(nextId));
-  if (source && !existing) retained.delete(ownerKey(source.ownerId));
+  const draft = existing || (source ? { ...source, ownerId: nextId, ...(copyPrevious ? { id: Crypto.randomUUID() } : {}) } : newDraft(nextId));
+  if (source && !existing && !copyPrevious) retained.delete(ownerKey(source.ownerId));
   useCaptureDraft.setState({ draft }); await persist(draft);
 }
 

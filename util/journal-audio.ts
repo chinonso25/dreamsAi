@@ -84,3 +84,23 @@ export async function removeJournalAudio(entry: { id: string; user_id: string; l
   }
   if (typeof Paths.cache.list === 'function') for (const item of Paths.cache.list()) if (item instanceof File && item.name.startsWith(prefix) && !protectedFiles.has(item.uri)) item.delete();
 }
+
+/** Recover only bytes already on this device; an expired owner's session cannot download them. */
+export async function recoverJournalAudio(entry: Journal, newId: string): Promise<{ uri?: string; missing: boolean }> {
+  const hasAudio = Boolean(entry.local_audio_uri || entry.audio_key || entry.audio_url || entry.audio_length);
+  if (!hasAudio) return { missing: false };
+  if (entry.local_audio_uri && managedRecording(entry.local_audio_uri)) {
+    const local = new File(entry.local_audio_uri);
+    if (local.exists && local.size > 0 && local.size <= 25 * 1024 * 1024) return { uri: local.uri, missing: false };
+  }
+  let cached = entry.audio_key ? await cacheFile(entry) : undefined;
+  if (!cached?.exists && /^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i.test(entry.id)) cached = new File(Paths.cache, `${entry.id}.m4a`);
+  if (!cached?.exists || cached.size <= 0 || cached.size > 25 * 1024 * 1024) return { missing: true };
+  if (!FileSystem.documentDirectory || !/^[A-Za-z0-9_-]+$/.test(newId)) throw new Error('Recording storage is unavailable. Your original journal has been retained.');
+  const directory = `${FileSystem.documentDirectory.replace(/\/?$/, '/')}dreamer-recordings/`;
+  await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
+  const destination = new File(`${directory}${newId}-recovered.m4a`);
+  await cached.copy(destination, { overwrite: true });
+  if (!destination.exists || destination.size <= 0) throw new Error('The recording could not be recovered. Its original cached file has been retained.');
+  return { uri: destination.uri, missing: false };
+}

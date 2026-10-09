@@ -1,13 +1,13 @@
 import React, { createContext, ReactNode, useContext, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import { useNetworkState } from 'expo-network';
-import { cachedUser, DreamerUser, ensureSession, authClient, rememberUser, forgetDeletedUser } from '@/util/auth-client';
-import { beginAccountDeletion, cancelAccountDeletion, clearDeletedAccountJournal, hydrateJournal, invalidateJournalRequests, rebindJournalOwner, refreshDreams, syncJournal, useJournalStore } from '@/util/journal';
+import { cachedUser, DreamerUser, ensureSession, authClient, rememberUser, forgetDeletedUser, SessionRecoveryError } from '@/util/auth-client';
+import { beginAccountDeletion, cancelAccountDeletion, clearDeletedAccountJournal, hydrateJournal, invalidateJournalRequests, rebindJournalOwner, recoverExpiredGuestJournal, refreshDreams, syncJournal, useJournalStore } from '@/util/journal';
 import { clearDeletedAccountDraft, rebindDraftOwner } from '@/util/drafts';
 import { apiRequest } from '@/util/api';
 
-type Context = { user: DreamerUser | null; isAuthenticated: boolean; isGuest: boolean; loading: boolean; error?: string; reconnect: () => Promise<void>; sendEmailCode: (email: string) => Promise<void>; verifyEmailCode: (email: string, otp: string) => Promise<void>; deleteAccount: () => Promise<{ cleanupWarning?: string }> };
-const AuthContext = createContext<Context>({ user: null, isAuthenticated: false, isGuest: true, loading: false, reconnect: async () => {}, sendEmailCode: async () => {}, verifyEmailCode: async () => {}, deleteAccount: async () => ({}) });
+type Context = { user: DreamerUser | null; isAuthenticated: boolean; isGuest: boolean; loading: boolean; error?: string; reconnect: () => Promise<void>; sendEmailCode: (email: string) => Promise<void>; verifyEmailCode: (email: string, otp: string) => Promise<{ recoveryWarning?: string }>; deleteAccount: () => Promise<{ cleanupWarning?: string }> };
+const AuthContext = createContext<Context>({ user: null, isAuthenticated: false, isGuest: true, loading: false, reconnect: async () => {}, sendEmailCode: async () => {}, verifyEmailCode: async () => ({}), deleteAccount: async () => ({}) });
 export const useAuth = () => useContext(AuthContext);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<DreamerUser | null>(null);
@@ -73,15 +73,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       identityEpoch.current += 1;
       const previous = await cachedUser();
       // Only a live anonymous session proves the server linked the old guest to this account.
-      const linkedGuest = previous?.isAnonymous === true ? await ensureSession({ force: true }) : undefined;
+      let linkedGuest: DreamerUser | undefined;
+      let recoverGuest = false;
+      if (previous?.isAnonymous === true) {
+        try { linkedGuest = await ensureSession({ force: true }); }
+        catch (cause) {
+          if (!(cause instanceof SessionRecoveryError) || cause.owner.id !== previous.id || cause.owner.isAnonymous !== true) throw cause;
+          recoverGuest = true;
+        }
+      }
       invalidateJournalRequests();
       const result = await authClient.signIn.emailOtp({ email: email.trim().toLowerCase(), otp: otp.trim() });
       if (result.error || !result.data?.user) throw new Error(result.error?.message || 'That code could not be verified. Request a new code and try again.');
       await rememberUser(result.data.user); setUser(result.data.user);
       const transferGuest = Boolean(linkedGuest?.isAnonymous && linkedGuest.id === previous?.id);
+      // An expired guest cannot link its cloud UUIDs. Explicit email recovery copies
+      // retained local content into fresh entries and keeps the original cache safe.
+      let recoveryWarning: string | undefined;
+      if (recoverGuest && previous) {
+        const recovery = await recoverExpiredGuestJournal(previous.id, result.data.user.id);
+        if (recovery.missingAudio) recoveryWarning = `Your saved text and available recordings were recovered. ${recovery.missingAudio} recording${recovery.missingAudio === 1 ? ' is' : 's are'} unavailable on this device and could not be recovered from the expired guest connection. The original local journal is retained.`;
+      }
       await rebindJournalOwner(previous?.id, result.data.user.id, transferGuest);
-      await rebindDraftOwner(previous?.id, result.data.user.id, transferGuest);
+      if (recoverGuest) await rebindDraftOwner(previous?.id, result.data.user.id, true, true);
+      else await rebindDraftOwner(previous?.id, result.data.user.id, transferGuest);
       setError(undefined); await refreshDreams();
+      return { recoveryWarning };
     } finally { accountOperation.current = false; setLoading(false); }
   };
   const deleteAccount = async () => {

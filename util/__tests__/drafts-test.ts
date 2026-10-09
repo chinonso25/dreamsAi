@@ -62,6 +62,20 @@ it('retains a draft through guest-to-email linking and clears only its deleted o
   expect(useCaptureDraft.getState().draft?.ownerId).toBeUndefined();
   expect(FileSystem.deleteAsync).toHaveBeenCalledWith('file:///documents/dreamer-recordings/owned.m4a', { idempotent: true });
 });
+
+it('copies an expired guest draft with a fresh identity while preserving its original', async () => {
+  useCaptureDraft.setState({ draft: { ...useCaptureDraft.getState().draft!, ownerId: 'guest-a', text: 'Retain my guest draft', audioUri: 'file:///documents/dreamer-recordings/draft-a.m4a' } });
+  mockDraftOwner = 'email-a';
+  await rebindDraftOwner('guest-a', 'email-a', true, true);
+  expect(useCaptureDraft.getState().draft).toMatchObject({ id: 'new-id', ownerId: 'email-a', text: 'Retain my guest draft' });
+  const calls = jest.mocked(AsyncStorage.setItem).mock.calls;
+  const retained = JSON.parse(calls[calls.length - 1][1]).drafts;
+  expect(retained).toEqual(expect.arrayContaining([
+    expect.objectContaining({ id: 'draft-a', ownerId: 'guest-a', text: 'Retain my guest draft' }),
+    expect.objectContaining({ id: 'new-id', ownerId: 'email-a', text: 'Retain my guest draft' }),
+  ]));
+  expect(FileSystem.deleteAsync).not.toHaveBeenCalled();
+});
 it('never clears another owner’s draft or a protected shared recording', async () => {
   useCaptureDraft.setState({ draft: { ...useCaptureDraft.getState().draft!, ownerId: 'other-owner' } });
   await updateDraft({ text: 'Private to another owner', audioUri: 'file:///documents/dreamer-recordings/shared.m4a' });

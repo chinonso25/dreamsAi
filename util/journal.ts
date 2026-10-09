@@ -6,8 +6,9 @@ import { getCurrentUser } from './auth-client';
 import { parseDreamResponse, parseDreamListResponse, parseDreamSyncResponse, toSaveDreamInput, validateDreamInput, type DreamDTO, type DreamListResponse, type DreamDeletionDTO, type SaveDreamInput, type EditDreamPatch, localDateKey } from '../shared/dream-contract';
 import { persistJournal, readJournal, waitForJournalWrites, type JournalDeletion } from './journal-persistence';
 import { nextRevision, editDream, mergeRemote, normalizeDreamClock } from './journal-transitions';
-import { journalAudioUri, uploadJournalAudio, removeJournalAudio, managedRecording, cancelJournalAudio } from './journal-audio';
+import { journalAudioUri, uploadJournalAudio, removeJournalAudio, managedRecording, cancelJournalAudio, recoverJournalAudio } from './journal-audio';
 
+type RecoveredJournal = Journal & { recovery_source?: string };
 type State = { entries: Journal[]; deleted: JournalDeletion[]; retiredOwners: string[]; cursors: Record<string, string>; hydrated: boolean; syncing: boolean; error?: string };
 export const useJournalStore = create<State>(() => ({ entries: [], deleted: [], retiredOwners: [], cursors: {}, hydrated: false, syncing: false }));
 let hydration: Promise<void> | undefined;
@@ -82,7 +83,7 @@ export async function updateDream(id: string, patch: EditDreamPatch) {
 export async function deleteDream(id: string) {
   await hydrateJournal();
   const entry = requireEntry(id);
-  useJournalStore.setState(state => ({ entries: state.entries.filter(item => item.id !== id), deleted: [...state.deleted.filter(item => item.id !== id), { id, user_id: entry.user_id, local_audio_uri: entry.local_audio_uri, cleanupPending: true }] }));
+  useJournalStore.setState(state => ({ entries: state.entries.filter(item => item.id !== id), deleted: [...state.deleted.filter(item => item.id !== id), { id, user_id: entry.user_id, local_audio_uri: entry.local_audio_uri, recovery_source: (entry as RecoveredJournal).recovery_source, cleanupPending: true }] }));
   await persist(); void syncJournal();
 }
 async function syncEntry(id: string, owner: string, token: number) {
@@ -189,7 +190,7 @@ export async function refreshDreams() {
         if (local && local.user_id !== owner) continue;
         if (local?.sync_version !== undefined && local.sync_version > deletion.sync_version) continue;
         if (local) merged.delete(deletion.id);
-        if (!blocked.has(`${owner}:${deletion.id}`)) deleted.push({ ...deletion, synced: true, local_audio_uri: local?.local_audio_uri, cleanupPending: true });
+        if (!blocked.has(`${owner}:${deletion.id}`)) deleted.push({ ...deletion, synced: true, local_audio_uri: local?.local_audio_uri, recovery_source: (local as RecoveredJournal | undefined)?.recovery_source, cleanupPending: true });
         blocked.add(`${owner}:${deletion.id}`);
       }
       for (const response of page.dreams) {
@@ -279,6 +280,46 @@ export async function rebindJournalOwner(previousId: string | undefined, nextId:
   invalidateJournalRequests();
   useJournalStore.setState({ entries: state.entries.map(entry => transfer(entry.user_id) ? { ...entry, user_id: nextId, sync_status: 'local' } : entry), deleted: state.deleted.map(item => transfer(item.user_id) ? { ...item, user_id: nextId } : item), cursors: { ...state.cursors, [nextId]: '0' } });
   await persist();
+}
+
+/** Called only after explicit email verification of an expired guest's locally retained journal. */
+export type JournalRecoveryResult = { missingAudio: number };
+export async function recoverExpiredGuestJournal(previousId: string, nextId: string): Promise<JournalRecoveryResult> {
+  await hydrateJournal();
+  if (!previousId || previousId === nextId || nextId !== getCurrentUser()?.id || ownerBlocked(nextId) || ownerBlocked(previousId)) throw new Error('Your account changed. Reconnect before recovering your saved dreams.');
+  const state = useJournalStore.getState();
+  const token = generation;
+  const recovered = new Map([...state.entries, ...state.deleted].filter(item => item.user_id === nextId).map(item => [(item as RecoveredJournal).recovery_source, item]));
+  let missingAudio = 0;
+  const clones: RecoveredJournal[] = [];
+  for (const source of state.entries.filter(entry => entry.user_id === previousId)) {
+    const marker = JSON.stringify([previousId, nextId, source.id]);
+    if (recovered.has(marker)) {
+      const existing = recovered.get(marker)!;
+      if ('transcript' in existing && (source.audio_key || source.local_audio_uri || source.audio_url || source.audio_length) && !existing.local_audio_uri && !existing.audio_key) missingAudio++;
+      continue;
+    }
+    const newId = Crypto.randomUUID();
+    const audio = await recoverJournalAudio(source, newId);
+    if (generation !== token || nextId !== getCurrentUser()?.id || ownerBlocked(nextId)) throw new Error('Your account changed. The original journal has been retained.');
+    if (audio.missing) missingAudio++;
+    if (!audio.uri && !(source.transcript.trim() || source.original_text?.trim() || source.summary?.trim())) continue;
+    const { audio_key: _audioKey, audio_url: _audioUrl, sync_version: _syncVersion, local_audio_uri: _localAudio, ...content } = source;
+    const clone: RecoveredJournal = normalizeDreamClock({ ...content, id: newId, user_id: nextId, updated_at: nextRevision(), sync_status: 'local', processing_status: source.processing_status === 'complete' ? 'complete' : 'idle', last_error: undefined, deleted_at: undefined, ...(audio.uri ? { local_audio_uri: audio.uri } : {}) });
+    clone.recovery_source = marker;
+    validateDreamInput(toSaveDreamInput(clone));
+    clones.push(clone); recovered.set(marker, clone);
+  }
+  // Originals remain intact, including their cloud IDs, tombstones and recording references.
+  if (clones.length) {
+    invalidateJournalRequests();
+    const current = useJournalStore.getState();
+    const alreadyRecovered = new Set([...current.entries, ...current.deleted].map(item => (item as RecoveredJournal).recovery_source));
+    useJournalStore.setState({ entries: [...clones.filter(entry => !alreadyRecovered.has(entry.recovery_source)), ...current.entries], cursors: { ...current.cursors, [nextId]: '0' }, error: undefined });
+  }
+  // A retry after partial storage failure reuses existing source markers and persists the same IDs.
+  await persist();
+  return { missingAudio };
 }
 
 /** Pause writes before deleting remotely; in-flight work finishes before the account is removed. */

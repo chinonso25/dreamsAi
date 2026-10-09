@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { fetch as expoFetch } from 'expo/fetch';
 import { apiRequest } from '../api';
 import { completeDraft, updateDraft, useCaptureDraft } from '../drafts';
-import { beginAccountDeletion, clearDeletedAccountJournal, saveDream, updateDream, deleteDream, refreshDreams, hydrateJournal, requestDreamProcessing, retryDream, syncJournal, useJournalStore, invalidateJournalRequests, rebindJournalOwner } from '../journal';
+import { beginAccountDeletion, clearDeletedAccountJournal, saveDream, updateDream, deleteDream, refreshDreams, hydrateJournal, requestDreamProcessing, retryDream, syncJournal, useJournalStore, invalidateJournalRequests, rebindJournalOwner, recoverExpiredGuestJournal } from '../journal';
 import type { Journal } from '@/types';
 
 jest.mock('@react-native-async-storage/async-storage', () => ({ getItem: jest.fn<() => Promise<string | null>>(), setItem: jest.fn<() => Promise<void>>(), removeItem: jest.fn<() => Promise<void>>(), getAllKeys: jest.fn<() => Promise<string[]>>(), multiGet: jest.fn<() => Promise<[string, string | null][]>>() }));
@@ -287,4 +287,51 @@ it('recovers unsynced future capture timestamps after the device clock is correc
   expect(Date.parse(uploaded.created_at)).toBeGreaterThanOrEqual(started); expect(Date.parse(uploaded.created_at)).toBeLessThanOrEqual(Date.now());
   expect(Date.parse(uploaded.updated_at)).toBeLessThanOrEqual(Date.now());
   expect(useJournalStore.getState().entries[0]).toMatchObject({ transcript: 'Flying over the water', sync_status: 'synced', dream_date: '2026-10-08' });
+});
+it('recovers expired guest content using fresh identities without mutating the guest journal', async () => {
+  const original = sample({ id: 'guest-cloud-id', user_id: 'expired-guest', audio_key: 'expired-guest/private-object', audio_url: 'https://old.example/private', sync_version: 7, local_audio_uri: 'file:///documents/dreamer-recordings/guest.m4a', summary: 'Original summary', processing_status: 'error', last_error: 'Expired' });
+  const oldTombstone = { id: 'deleted-guest-dream', user_id: 'expired-guest', synced: true };
+  useJournalStore.setState({ entries: [original], deleted: [oldTombstone] });
+  await recoverExpiredGuestJournal('expired-guest', 'guest-a');
+  const clone = useJournalStore.getState().entries.find(entry => entry.user_id === 'guest-a')!;
+  expect(clone.id).toBe('new-id'); expect(clone.id).not.toBe(original.id);
+  expect(clone).toMatchObject({ transcript: original.transcript, summary: 'Original summary', dream_date: original.dream_date, local_audio_uri: original.local_audio_uri, sync_status: 'local', processing_status: 'idle' });
+  expect(clone.audio_key).toBeUndefined(); expect(clone.audio_url).toBeUndefined(); expect(clone.sync_version).toBeUndefined(); expect(clone.last_error).toBeUndefined();
+  expect(useJournalStore.getState().entries.find(entry => entry.user_id === 'expired-guest')).toBe(original); expect(useJournalStore.getState().deleted).toEqual([oldTombstone]);
+  expect(api).not.toHaveBeenCalled(); expect(mockDeleteFile).not.toHaveBeenCalled();
+  await recoverExpiredGuestJournal('expired-guest', 'guest-a'); expect(useJournalStore.getState().entries.filter(entry => entry.user_id === 'guest-a')).toHaveLength(1);
+});
+it('recovery refuses a destination that is not the currently verified owner', async () => {
+  const original = sample({ user_id: 'expired-guest' }); useJournalStore.setState({ entries: [original] });
+  await expect(recoverExpiredGuestJournal('expired-guest', 'someone-else')).rejects.toThrow('account changed'); expect(useJournalStore.getState().entries).toEqual([original]); expect(AsyncStorage.setItem).not.toHaveBeenCalled();
+});
+it('a failed recovery preserves originals and retries the same clone instead of duplicating it', async () => {
+  const original = sample({ user_id: 'expired-guest', local_audio_uri: 'file:///documents/private.m4a', audio_key: 'old-object' }); useJournalStore.setState({ entries: [original] });
+  const audio = jest.spyOn(jest.requireActual<typeof import('../journal-audio')>('../journal-audio'), 'recoverJournalAudio').mockResolvedValue({ missing: true });
+  try {
+    jest.mocked(AsyncStorage.setItem).mockRejectedValueOnce(new Error('Recovery storage interrupted'));
+    await expect(recoverExpiredGuestJournal('expired-guest', 'guest-a')).rejects.toThrow('Recovery storage interrupted');
+    expect(useJournalStore.getState().entries.find(entry => entry.user_id === 'expired-guest')).toBe(original);
+    expect(await recoverExpiredGuestJournal('expired-guest', 'guest-a')).toEqual({ missingAudio: 1 });
+    const clones = useJournalStore.getState().entries.filter(entry => entry.user_id === 'guest-a'); expect(clones).toHaveLength(1); expect(clones[0].local_audio_uri).toBeUndefined(); expect(clones[0].audio_key).toBeUndefined(); expect(mockDeleteFile).not.toHaveBeenCalled();
+  } finally { audio.mockRestore(); }
+});
+it('deleting a recovered dream preserves shared original audio and prevents repeated recovery', async () => {
+  const original = sample({ user_id: 'expired-guest', local_audio_uri: 'file:///documents/dreamer-recordings/shared-guest.m4a' }); useJournalStore.setState({ entries: [original] });
+  await recoverExpiredGuestJournal('expired-guest', 'guest-a'); const clone = useJournalStore.getState().entries.find(entry => entry.user_id === 'guest-a')!;
+  await deleteDream(clone.id); await syncJournal(); expect(mockDeleteFile).not.toHaveBeenCalledWith(original.local_audio_uri);
+  await recoverExpiredGuestJournal('expired-guest', 'guest-a'); expect(useJournalStore.getState().entries.filter(entry => entry.user_id === 'guest-a')).toHaveLength(0); expect(useJournalStore.getState().entries[0]).toBe(original);
+});
+
+it('counts missing old recordings and preserves voice-only sources without creating blank recovered entries', async () => {
+  const voice = sample({ id: 'voice-only', user_id: 'expired-guest', transcript: '', original_text: '', summary: undefined, audio_key: 'expired-guest/voice' });
+  const written = sample({ id: 'written-recording', user_id: 'expired-guest', audio_key: 'expired-guest/recording' });
+  useJournalStore.setState({ entries: [voice, written] });
+  // The basic File fixture has an existing cache; make its zero size represent an unavailable recording.
+  const audio = jest.spyOn(jest.requireActual<typeof import('../journal-audio')>('../journal-audio'), 'recoverJournalAudio').mockResolvedValue({ missing: true });
+  try {
+    expect(await recoverExpiredGuestJournal('expired-guest', 'guest-a')).toEqual({ missingAudio: 2 });
+    const clones = useJournalStore.getState().entries.filter(entry => entry.user_id === 'guest-a'); expect(clones).toHaveLength(1); expect(clones[0].transcript).toBe(written.transcript); expect(clones[0].audio_key).toBeUndefined();
+    expect(useJournalStore.getState().entries.find(entry => entry.id === 'voice-only')).toBe(voice); expect(useJournalStore.getState().entries.find(entry => entry.id === 'written-recording')).toBe(written);
+  } finally { audio.mockRestore(); }
 });
